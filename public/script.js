@@ -27,13 +27,25 @@ roomInput.onkeypress = (e) => {
     if (e.key === 'Enter') goRoomBtn.click();
 };
 
+// --- GLOBAL ERROR CATCHING ---
+const debugLog = document.getElementById('debug-log');
+function log(msg) {
+    console.log(msg);
+    const entry = document.createElement('div');
+    entry.innerText = `> ${new Date().toLocaleTimeString()}: ${msg}`;
+    if (debugLog) debugLog.prepend(entry);
+}
+
+window.onerror = (msg, url, line) => {
+    log(`JS ERROR: ${msg} at ${line}`);
+};
+
 const startBtn = document.getElementById('start-broadcast');
 const stopBtn = document.getElementById('stop-broadcast');
 const streamView = document.getElementById('stream-view');
 const receiverView = document.getElementById('receiver-view');
 const remoteAudio = document.getElementById('remote-audio');
 const audioStatus = document.getElementById('audio-status');
-const debugLog = document.getElementById('debug-log');
 const manualPlayBtn = document.getElementById('manual-play');
 
 let localStream;
@@ -41,13 +53,6 @@ let peerConnection;
 const config = {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
-
-function log(msg) {
-    console.log(msg);
-    const entry = document.createElement('div');
-    entry.innerText = `> ${new Date().toLocaleTimeString()}: ${msg}`;
-    debugLog.prepend(entry);
-}
 
 function cleanupConnection() {
     if (peerConnection) {
@@ -60,7 +65,7 @@ function cleanupConnection() {
     }
 }
 
-// --- SIGNALING LISTENERS (Defined once) ---
+// --- SIGNALING LISTENERS ---
 
 socket.on('user-connected', (userId) => {
     if (localStream) {
@@ -107,6 +112,18 @@ socket.on('answer', async (data) => {
     }
 });
 
+socket.on('user-disconnected', (userId) => {
+    log(`User ${userId} disconnected.`);
+    cleanupConnection();
+    if (!localStream) {
+        // If we are the receiver, go back to idle
+        const dot = audioStatus.querySelector('.dot');
+        const text = audioStatus.querySelector('span');
+        if (dot) dot.className = 'dot gray';
+        if (text) text.innerText = 'Idle';
+    }
+});
+
 socket.on('ice-candidate', async (data) => {
     if (peerConnection) {
         try {
@@ -119,56 +136,42 @@ socket.on('ice-candidate', async (data) => {
 
 // --- TRANSMITTER LOGIC ---
 
-startBtn.onclick = async () => {
-    log("Start button clicked...");
-    
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-        log("ERROR: getDisplayMedia not supported. Use HTTPS or localhost.");
-        alert("Your browser does not support screen capture. Ensure you are using HTTPS.");
-        return;
-    }
-
-    try {
-        log("Requesting display media (Entire Screen + Share Audio)...");
-        // video: true is MANDATORY for getDisplayMedia in most browsers
-        localStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true, 
-            audio: {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false
+if (startBtn) {
+    startBtn.onclick = async () => {
+        log("Button clicked. Checking mediaDevices...");
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                throw new Error("getDisplayMedia not supported (Use HTTPS)");
             }
-        });
 
-        const audioTracks = localStream.getAudioTracks();
-        if (audioTracks.length === 0) {
-            log("Error: No audio track found. Stopping stream.");
-            localStream.getTracks().forEach(t => t.stop());
-            alert("No audio track detected. Please select 'Entire Screen' and check the 'Share Audio' box.");
-            return;
+            log("Requesting stream (Select Screen + Share Audio)...");
+            localStream = await navigator.mediaDevices.getDisplayMedia({
+                video: true,
+                audio: true
+            });
+
+            const audioTracks = localStream.getAudioTracks();
+            if (audioTracks.length === 0) {
+                localStream.getTracks().forEach(t => t.stop());
+                throw new Error("No audio track selected in the popup.");
+            }
+
+            log("Success! Audio captured.");
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) videoTrack.stop();
+
+            setupView.classList.add('hidden');
+            streamView.classList.remove('hidden');
+
+            socket.emit('broadcaster-ready', roomId);
+            startVisualizer(localStream);
+
+        } catch (err) {
+            log(`CRITICAL ERROR: ${err.message}`);
+            alert(`Error: ${err.message}`);
         }
-
-        log("Audio track captured successfully.");
-
-        // Stop video immediately to save resources
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) videoTrack.stop();
-
-        setupView.classList.add('hidden');
-        streamView.classList.remove('hidden');
-
-        socket.emit('broadcaster-ready', roomId);
-        startVisualizer(localStream);
-
-    } catch (err) {
-        log(`Capture error: ${err.name} - ${err.message}`);
-        if (err.name === 'NotAllowedError') {
-            alert("Permission denied. You must allow screen sharing to stream audio.");
-        } else {
-            alert("Could not capture audio. Check console for details.");
-        }
-    }
-};
+    };
+}
 
 async function initiateCall(targetId) {
     cleanupConnection();
@@ -195,20 +198,35 @@ function createPeerConnection(targetId) {
         log(`State: ${pc.connectionState}`);
         if (pc.connectionState === 'connected') {
             const dot = audioStatus.querySelector('.dot');
-            dot.className = 'dot green';
+            if (dot) dot.className = 'dot green';
         }
     };
 
     pc.ontrack = (event) => {
-        log("Stream received!");
-        remoteAudio.srcObject = event.streams[0];
+        log(`Track received: ${event.track.kind}`);
         
-        remoteAudio.play().then(() => log("Playing...")).catch(e => {
-            log("Autoplay blocked. Tap the button.");
+        // Robust way to attach the stream
+        if (event.streams && event.streams[0]) {
+            remoteAudio.srcObject = event.streams[0];
+        } else {
+            // Fallback for browsers that don't provide the stream in the event
+            if (!remoteAudio.srcObject) {
+                remoteAudio.srcObject = new MediaStream();
+            }
+            remoteAudio.srcObject.addTrack(event.track);
+        }
+        
+        remoteAudio.play().then(() => {
+            log("Playing audio stream...");
+            const text = audioStatus.querySelector('span');
+            if (text) text.innerText = 'Streaming Active';
+        }).catch(e => {
+            log("Autoplay blocked. Tap the button below.");
             manualPlayBtn.classList.remove('hidden');
             manualPlayBtn.onclick = () => {
                 remoteAudio.play();
                 manualPlayBtn.classList.add('hidden');
+                log("Audio started by user gesture.");
             };
         });
     };
@@ -238,4 +256,4 @@ function startVisualizer(stream) {
     draw();
 }
 
-stopBtn.onclick = () => location.reload();
+if (stopBtn) stopBtn.onclick = () => location.reload();

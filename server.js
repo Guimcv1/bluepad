@@ -62,6 +62,14 @@ io.on('connection', (socket) => {
         });
     });
 
+    socket.on('disconnecting', () => {
+        for (const roomId of socket.rooms) {
+            if (roomId !== socket.id) {
+                socket.to(roomId).emit('user-disconnected', socket.id);
+            }
+        }
+    });
+
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
     });
