@@ -20,9 +20,7 @@ if (roomId) {
 
 goRoomBtn.onclick = () => {
     const keyword = roomInput.value.trim().toLowerCase();
-    if (keyword) {
-        window.location.href = `/${keyword}`;
-    }
+    if (keyword) window.location.href = `/${keyword}`;
 };
 
 roomInput.onkeypress = (e) => {
@@ -47,104 +45,42 @@ const config = {
 function log(msg) {
     console.log(msg);
     const entry = document.createElement('div');
-    entry.innerText = `> ${msg}`;
+    entry.innerText = `> ${new Date().toLocaleTimeString()}: ${msg}`;
     debugLog.prepend(entry);
 }
 
-log(`Room: ${roomId || 'none'}`);
-
-// --- TRANSMITTER LOGIC ---
-
-startBtn.onclick = async () => {
-    try {
-        log("Requesting display media...");
-        localStream = await navigator.mediaDevices.getDisplayMedia({
-            video: { displaySurface: 'monitor' },
-            audio: {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false
-            }
-        });
-
-        const audioTracks = localStream.getAudioTracks();
-        if (audioTracks.length === 0) {
-            log("Error: No audio track found. Did you check 'Share Audio'?");
-            alert("No audio track detected. Please select 'Entire Screen' and check the 'Share Audio' box.");
-            return;
-        }
-
-        log("Audio track captured successfully.");
-
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) videoTrack.stop();
-
-        setupView.classList.add('hidden');
-        streamView.classList.remove('hidden');
-
-        socket.on('user-connected', (userId) => {
-            log(`New user connected: ${userId}. Starting call...`);
-            initiateCall(userId);
-        });
-
-        // Notify anyone already in the room
-        socket.emit('broadcaster-ready', roomId);
-
-        // Listen for receivers who were already there
-        socket.on('receiver-ready', (userId) => {
-            log(`Receiver ${userId} is ready. Starting call...`);
-            initiateCall(userId);
-        });
-
-        startVisualizer(localStream);
-
-    } catch (err) {
-        log(`Capture error: ${err.message}`);
-        alert("Could not capture audio. Ensure you are on HTTPS and granted permissions.");
+function cleanupConnection() {
+    if (peerConnection) {
+        log("Cleaning up old connection...");
+        peerConnection.onicecandidate = null;
+        peerConnection.ontrack = null;
+        peerConnection.onconnectionstatechange = null;
+        peerConnection.close();
+        peerConnection = null;
     }
-};
-
-function startVisualizer(stream) {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioContext.createMediaStreamSource(stream);
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 32;
-    source.connect(analyser);
-
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    const bars = document.querySelectorAll('.bar');
-
-    function draw() {
-        if (!localStream) return;
-        requestAnimationFrame(draw);
-        analyser.getByteFrequencyData(dataArray);
-
-        bars.forEach((bar, index) => {
-            const val = dataArray[index] || 0;
-            const height = Math.max(10, (val / 255) * 60);
-            bar.style.height = `${height}px`;
-        });
-    }
-    draw();
 }
 
-async function initiateCall(targetId) {
-    log(`Initiating call to ${targetId}`);
-    peerConnection = createPeerConnection(targetId);
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+// --- SIGNALING LISTENERS (Defined once) ---
 
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
+socket.on('user-connected', (userId) => {
+    if (localStream) {
+        log(`New user joined: ${userId}. Starting call...`);
+        initiateCall(userId);
+    }
+});
 
-    socket.emit('offer', { roomId, sdp: offer });
-}
-
-// --- RECEIVER LOGIC ---
+socket.on('receiver-ready', (userId) => {
+    if (localStream) {
+        log(`Receiver ${userId} ready. Starting call...`);
+        initiateCall(userId);
+    }
+});
 
 socket.on('broadcaster-ready', (broadcasterId) => {
-    log(`Broadcaster detected: ${broadcasterId}. Sending readiness...`);
-    socket.emit('receiver-ready', { roomId, targetId: broadcasterId });
+    if (!localStream) {
+        log(`Broadcaster detected: ${broadcasterId}. Sending readiness...`);
+        socket.emit('receiver-ready', { roomId, targetId: broadcasterId });
+    }
 });
 
 socket.on('offer', async (data) => {
@@ -154,6 +90,7 @@ socket.on('offer', async (data) => {
         receiverView.classList.remove('hidden');
     }
 
+    cleanupConnection();
     peerConnection = createPeerConnection(data.senderId);
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
 
@@ -165,20 +102,67 @@ socket.on('offer', async (data) => {
 
 socket.on('answer', async (data) => {
     log(`Answer received from ${data.senderId}`);
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    if (peerConnection) {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    }
 });
 
 socket.on('ice-candidate', async (data) => {
     if (peerConnection) {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+            console.error("Error adding ice candidate", e);
+        }
     }
 });
 
-// --- HELPER FUNCTIONS ---
+// --- TRANSMITTER LOGIC ---
+
+startBtn.onclick = async () => {
+    try {
+        log("Requesting display media...");
+        localStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { displaySurface: 'monitor' },
+            audio: { echoCancellation: false, noiseSuppression: false }
+        });
+
+        const audioTracks = localStream.getAudioTracks();
+        if (audioTracks.length === 0) {
+            log("Error: No audio track found.");
+            alert("Please check the 'Share Audio' box.");
+            return;
+        }
+
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack) videoTrack.stop();
+
+        setupView.classList.add('hidden');
+        streamView.classList.remove('hidden');
+
+        socket.emit('broadcaster-ready', roomId);
+        startVisualizer(localStream);
+
+    } catch (err) {
+        log(`Capture error: ${err.message}`);
+        alert("Could not capture audio.");
+    }
+};
+
+async function initiateCall(targetId) {
+    cleanupConnection();
+    peerConnection = createPeerConnection(targetId);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    socket.emit('offer', { roomId, sdp: offer });
+}
 
 function createPeerConnection(targetId) {
     const pc = new RTCPeerConnection(config);
-    log(`Creating RTCPeerConnection for ${targetId}`);
+    log(`PC created for ${targetId}`);
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
@@ -187,27 +171,23 @@ function createPeerConnection(targetId) {
     };
 
     pc.onconnectionstatechange = () => {
-        log(`Connection state: ${pc.connectionState}`);
+        log(`State: ${pc.connectionState}`);
+        if (pc.connectionState === 'connected') {
+            const dot = audioStatus.querySelector('.dot');
+            dot.className = 'dot green';
+        }
     };
 
     pc.ontrack = (event) => {
-        log("Audio track received from peer.");
+        log("Stream received!");
         remoteAudio.srcObject = event.streams[0];
         
-        const dot = audioStatus.querySelector('.dot');
-        const text = audioStatus.querySelector('span');
-        dot.className = 'dot green';
-        text.innerText = 'Connected';
-        
-        remoteAudio.play().then(() => {
-            log("Autoplay successful.");
-        }).catch(e => {
-            log("Autoplay blocked. Showing manual play button.");
+        remoteAudio.play().then(() => log("Playing...")).catch(e => {
+            log("Autoplay blocked. Tap the button.");
             manualPlayBtn.classList.remove('hidden');
             manualPlayBtn.onclick = () => {
                 remoteAudio.play();
                 manualPlayBtn.classList.add('hidden');
-                log("Audio started manually.");
             };
         });
     };
@@ -215,13 +195,26 @@ function createPeerConnection(targetId) {
     return pc;
 }
 
-stopBtn.onclick = () => {
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        localStream = null;
+function startVisualizer(stream) {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 32;
+    source.connect(analyser);
+
+    const bars = document.querySelectorAll('.bar');
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    function draw() {
+        if (!localStream) return;
+        requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(dataArray);
+        bars.forEach((bar, i) => {
+            const h = Math.max(10, (dataArray[i] / 255) * 60);
+            bar.style.height = `${h}px`;
+        });
     }
-    if (peerConnection) {
-        peerConnection.close();
-    }
-    location.reload();
-};
+    draw();
+}
+
+stopBtn.onclick = () => location.reload();
