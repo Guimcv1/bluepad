@@ -56,12 +56,14 @@
             <div id="receiver-view" class="view hidden">
                 <div class="card">
                     <h2>Listening Mode</h2>
-                    <p>Waiting for audio stream...</p>
+                    <p id="receiver-hint">Waiting for audio stream...</p>
                     <div id="audio-status" class="status-indicator">
                         <div class="dot gray"></div>
                         <span>Idle</span>
                     </div>
-                    <audio id="remote-audio" autoplay></audio>
+                    <div id="debug-log" style="font-size: 0.7rem; color: #aaa; margin-top: 1rem; text-align: left; max-height: 100px; overflow-y: auto;"></div>
+                    <audio id="remote-audio" autoplay playsinline></audio>
+                    <button id="manual-play" class="btn primary hidden" style="margin-top: 1rem;">Tap to Hear Audio</button>
                 </div>
             </div>
         </main>

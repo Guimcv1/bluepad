@@ -35,6 +35,8 @@ const streamView = document.getElementById('stream-view');
 const receiverView = document.getElementById('receiver-view');
 const remoteAudio = document.getElementById('remote-audio');
 const audioStatus = document.getElementById('audio-status');
+const debugLog = document.getElementById('debug-log');
+const manualPlayBtn = document.getElementById('manual-play');
 
 let localStream;
 let peerConnection;
@@ -42,11 +44,20 @@ const config = {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
 
+function log(msg) {
+    console.log(msg);
+    const entry = document.createElement('div');
+    entry.innerText = `> ${msg}`;
+    debugLog.prepend(entry);
+}
+
+log(`Room: ${roomId || 'none'}`);
+
 // --- TRANSMITTER LOGIC ---
 
 startBtn.onclick = async () => {
     try {
-        // Capture system audio (requires video:true)
+        log("Requesting display media...");
         localStream = await navigator.mediaDevices.getDisplayMedia({
             video: { displaySurface: 'monitor' },
             audio: {
@@ -56,24 +67,31 @@ startBtn.onclick = async () => {
             }
         });
 
-        // Hide video track to save bandwidth, we only need audio
+        const audioTracks = localStream.getAudioTracks();
+        if (audioTracks.length === 0) {
+            log("Error: No audio track found. Did you check 'Share Audio'?");
+            alert("No audio track detected. Please select 'Entire Screen' and check the 'Share Audio' box.");
+            return;
+        }
+
+        log("Audio track captured successfully.");
+
         const videoTrack = localStream.getVideoTracks()[0];
         if (videoTrack) videoTrack.stop();
 
         setupView.classList.add('hidden');
         streamView.classList.remove('hidden');
 
-        // When a new user connects, start a peer connection
         socket.on('user-connected', (userId) => {
+            log(`New user connected: ${userId}. Starting call...`);
             initiateCall(userId);
         });
 
-        // Start visualizer
         startVisualizer(localStream);
 
     } catch (err) {
-        console.error("Error capturing audio:", err);
-        alert("Could not capture audio. Make sure to share 'Entire Screen' and check 'Share Audio'.");
+        log(`Capture error: ${err.message}`);
+        alert("Could not capture audio. Ensure you are on HTTPS and granted permissions.");
     }
 };
 
@@ -103,6 +121,7 @@ function startVisualizer(stream) {
 }
 
 async function initiateCall(targetId) {
+    log(`Initiating call to ${targetId}`);
     peerConnection = createPeerConnection(targetId);
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
@@ -115,7 +134,7 @@ async function initiateCall(targetId) {
 // --- RECEIVER LOGIC ---
 
 socket.on('offer', async (data) => {
-    // If we are not the transmitter, show receiver view
+    log(`Offer received from ${data.senderId}`);
     if (!localStream) {
         setupView.classList.add('hidden');
         receiverView.classList.remove('hidden');
@@ -131,6 +150,7 @@ socket.on('offer', async (data) => {
 });
 
 socket.on('answer', async (data) => {
+    log(`Answer received from ${data.senderId}`);
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
 });
 
@@ -144,6 +164,7 @@ socket.on('ice-candidate', async (data) => {
 
 function createPeerConnection(targetId) {
     const pc = new RTCPeerConnection(config);
+    log(`Creating RTCPeerConnection for ${targetId}`);
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
@@ -151,21 +172,29 @@ function createPeerConnection(targetId) {
         }
     };
 
+    pc.onconnectionstatechange = () => {
+        log(`Connection state: ${pc.connectionState}`);
+    };
+
     pc.ontrack = (event) => {
-        console.log("Track received");
+        log("Audio track received from peer.");
         remoteAudio.srcObject = event.streams[0];
         
-        // Update status UI
         const dot = audioStatus.querySelector('.dot');
         const text = audioStatus.querySelector('span');
         dot.className = 'dot green';
-        text.innerText = 'Streaming Audio';
+        text.innerText = 'Connected';
         
-        // Browsers often block autoplay without user interaction
-        remoteAudio.play().catch(e => {
-            console.log("Autoplay blocked, waiting for interaction");
-            text.innerText = 'Tap to Start Audio';
-            window.addEventListener('click', () => remoteAudio.play(), { once: true });
+        remoteAudio.play().then(() => {
+            log("Autoplay successful.");
+        }).catch(e => {
+            log("Autoplay blocked. Showing manual play button.");
+            manualPlayBtn.classList.remove('hidden');
+            manualPlayBtn.onclick = () => {
+                remoteAudio.play();
+                manualPlayBtn.classList.add('hidden');
+                log("Audio started manually.");
+            };
         });
     };
 
