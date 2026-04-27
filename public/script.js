@@ -120,20 +120,37 @@ socket.on('ice-candidate', async (data) => {
 // --- TRANSMITTER LOGIC ---
 
 startBtn.onclick = async () => {
+    log("Start button clicked...");
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        log("ERROR: getDisplayMedia not supported. Use HTTPS or localhost.");
+        alert("Your browser does not support screen capture. Ensure you are using HTTPS.");
+        return;
+    }
+
     try {
-        log("Requesting display media...");
+        log("Requesting display media (Entire Screen + Share Audio)...");
+        // video: true is MANDATORY for getDisplayMedia in most browsers
         localStream = await navigator.mediaDevices.getDisplayMedia({
-            video: { displaySurface: 'monitor' },
-            audio: { echoCancellation: false, noiseSuppression: false }
+            video: true, 
+            audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false
+            }
         });
 
         const audioTracks = localStream.getAudioTracks();
         if (audioTracks.length === 0) {
-            log("Error: No audio track found.");
-            alert("Please check the 'Share Audio' box.");
+            log("Error: No audio track found. Stopping stream.");
+            localStream.getTracks().forEach(t => t.stop());
+            alert("No audio track detected. Please select 'Entire Screen' and check the 'Share Audio' box.");
             return;
         }
 
+        log("Audio track captured successfully.");
+
+        // Stop video immediately to save resources
         const videoTrack = localStream.getVideoTracks()[0];
         if (videoTrack) videoTrack.stop();
 
@@ -144,8 +161,12 @@ startBtn.onclick = async () => {
         startVisualizer(localStream);
 
     } catch (err) {
-        log(`Capture error: ${err.message}`);
-        alert("Could not capture audio.");
+        log(`Capture error: ${err.name} - ${err.message}`);
+        if (err.name === 'NotAllowedError') {
+            alert("Permission denied. You must allow screen sharing to stream audio.");
+        } else {
+            alert("Could not capture audio. Check console for details.");
+        }
     }
 };
 
