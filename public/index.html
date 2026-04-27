@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OnlineBluetooth | Minimalist Audio Stream</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1 id="logo">Online<span>Bluetooth</span></h1>
+            <p id="room-display">Room: <span id="room-id">...</span></p>
+        </header>
+
+        <main>
+            <div id="home-view" class="view">
+                <div class="card">
+                    <h2>Choose your Room</h2>
+                    <p>Enter a keyword to create or join a room.</p>
+                    <div class="input-group">
+                        <span class="prefix">onlinebluetooth.com/</span>
+                        <input type="text" id="room-input" placeholder="keyword" autocomplete="off">
+                    </div>
+                    <button id="go-room" class="btn primary">Join Room</button>
+                </div>
+            </div>
+
+            <div id="setup-view" class="view hidden">
+                <div class="card">
+                    <h2>Capture & Stream</h2>
+                    <p>Share your PC audio and listen on your phone.</p>
+                    <button id="start-broadcast" class="btn primary">Start Broadcasting</button>
+                    <p class="hint">Make sure to check "Share Audio" in the popup.</p>
+                </div>
+            </div>
+
+            <div id="stream-view" class="view hidden">
+                <div class="card">
+                    <div class="status-indicator">
+                        <div class="dot pulse"></div>
+                        <span>Live Transmission</span>
+                    </div>
+                    <div id="visualizer">
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                    </div>
+                    <button id="stop-broadcast" class="btn secondary">Stop</button>
+                </div>
+            </div>
+
+            <div id="receiver-view" class="view hidden">
+                <div class="card">
+                    <h2>Listening Mode</h2>
+                    <p>Waiting for audio stream...</p>
+                    <div id="audio-status" class="status-indicator">
+                        <div class="dot gray"></div>
+                        <span>Idle</span>
+                    </div>
+                    <audio id="remote-audio" autoplay></audio>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>&copy; 2026 OnlineBluetooth. Low Latency P2P.</p>
+        </footer>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
