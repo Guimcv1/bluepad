@@ -87,6 +87,15 @@ startBtn.onclick = async () => {
             initiateCall(userId);
         });
 
+        // Notify anyone already in the room
+        socket.emit('broadcaster-ready', roomId);
+
+        // Listen for receivers who were already there
+        socket.on('receiver-ready', (userId) => {
+            log(`Receiver ${userId} is ready. Starting call...`);
+            initiateCall(userId);
+        });
+
         startVisualizer(localStream);
 
     } catch (err) {
@@ -132,6 +141,11 @@ async function initiateCall(targetId) {
 }
 
 // --- RECEIVER LOGIC ---
+
+socket.on('broadcaster-ready', (broadcasterId) => {
+    log(`Broadcaster detected: ${broadcasterId}. Sending readiness...`);
+    socket.emit('receiver-ready', { roomId, targetId: broadcasterId });
+});
 
 socket.on('offer', async (data) => {
     log(`Offer received from ${data.senderId}`);

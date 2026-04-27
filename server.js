@@ -29,6 +29,16 @@ io.on('connection', (socket) => {
         socket.to(roomId).emit('user-connected', socket.id);
     });
 
+    socket.on('broadcaster-ready', (roomId) => {
+        console.log(`Broadcaster ready in room: ${roomId}`);
+        socket.to(roomId).emit('broadcaster-ready', socket.id);
+    });
+
+    socket.on('receiver-ready', (data) => {
+        // data.targetId is the broadcaster's ID
+        socket.to(data.roomId).emit('receiver-ready', socket.id);
+    });
+
     socket.on('offer', (data) => {
         // data contains { targetId, sdp }
         socket.to(data.roomId).emit('offer', {
