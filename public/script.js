@@ -255,7 +255,7 @@ function startSelectedMode(mode) {
     }
 
     if (typedNickname) {
-        myUsername = typedNickname;
+        myUsername = typedNickname.substring(0, 15);
         setCookie('bluepad_nickname', myUsername);
         localStorage.setItem('bluepad_nickname', myUsername);
     }
@@ -933,12 +933,14 @@ function focusScreenStream(streamId) {
     focusedScreenId = streamId;
 
     if (focusedScreenshareContainer && focusedScreenshareVideo) {
-        // Conecta o stream ao container expandido em destaque
+        // Conecta o stream ao container expandido em destaque (muted = true garante que o navegador reproduza sem tela preta)
+        focusedScreenshareVideo.autoplay = true;
+        focusedScreenshareVideo.playsInline = true;
+        focusedScreenshareVideo.muted = true;
         focusedScreenshareVideo.srcObject = item.stream;
-        focusedScreenshareVideo.muted = (streamId === 'local_screen');
         if (focusedScreenshareTitle) focusedScreenshareTitle.textContent = `🖥️ Transmissão de Tela de ${item.username}`;
         focusedScreenshareContainer.classList.remove('hidden');
-        focusedScreenshareVideo.play().catch(e => {});
+        focusedScreenshareVideo.play().catch(e => log(`Video play error: ${e.message}`));
     }
 
     renderVoiceStreamsGrid();
@@ -1082,26 +1084,35 @@ async function createVoicePeerConnection(peerId, isInitiator, peerUsername = 'Am
 
     pc.ontrack = (event) => {
         log(`Mídia (${event.track.kind}) recebida do peer (${peerId})`);
-        const stream = event.streams[0] || new MediaStream([event.track]);
 
         if (event.track.kind === 'video') {
+            const videoStream = new MediaStream([event.track]);
+            const existing = activeScreenStreams.get(peerId);
             activeScreenStreams.set(peerId, {
                 id: peerId,
                 userId: peerId,
-                username: peerUsername,
-                stream: stream
+                username: (existing && existing.username) || peerUsername || 'Amigo',
+                stream: videoStream
             });
+
+            if (focusedScreenId === peerId && focusedScreenshareVideo) {
+                focusedScreenshareVideo.srcObject = videoStream;
+                focusedScreenshareVideo.muted = true;
+                focusedScreenshareVideo.play().catch(e => {});
+            }
+
             renderVoiceStreamsGrid();
         }
         if (event.track.kind === 'audio') {
-            audioElem.srcObject = stream;
+            const audioStream = event.streams[0] || new MediaStream([event.track]);
+            audioElem.srcObject = audioStream;
             audioElem.muted = isDeafened;
             audioElem.play().catch(e => {});
 
             // Roteia o áudio recebido através do amplificador Web Audio API GainNode (Suporta volume de 0% até 200%!)
             try {
                 const { ctx, gain } = getMasterAudioContext();
-                const source = ctx.createMediaStreamSource(stream);
+                const source = ctx.createMediaStreamSource(audioStream);
                 source.connect(gain);
             } catch (e) {
                 log(`Web Audio Gain Routing info: ${e.message}`);
