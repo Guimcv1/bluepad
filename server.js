@@ -76,32 +76,70 @@ app.get('/:room', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Room state tracking: roomId -> { broadcasterId: string|null, listeners: Set<string> }
+// Room state tracking: roomId -> { broadcasterId: string|null, listeners: Set<string>, users: Map, messages: Map, voiceChannels: Map }
 const rooms = new Map();
 
 function getOrCreateRoom(roomId) {
     if (!rooms.has(roomId)) {
         rooms.set(roomId, {
             broadcasterId: null,
-            listeners: new Set()
+            listeners: new Set(),
+            users: new Map(),
+            screenSharingUser: null,
+            messages: new Map([
+                ['geral', [
+                    { id: 'sys1', username: 'BluePad Bot', avatarColor: '#5865f2', content: `Bem-vindo à sala #${roomId}! Envie mensagens ou entre no canal de voz.`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isSystem: true }
+                ]]
+            ]),
+            voiceChannels: new Map([
+                ['v-geral', new Set()]
+            ])
         });
     }
     return rooms.get(roomId);
+}
+
+function broadcastVoiceChannelState(roomId, channelId) {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    const channelUsers = room.voiceChannels.get(channelId) || new Set();
+    const userDetails = Array.from(channelUsers).map(id => {
+        const u = room.users.get(id);
+        return u || { id, username: `Usuário ${id.substr(0, 4)}`, avatarColor: '#5865f2', isMuted: false, isDeafened: false, isSpeaking: false };
+    });
+
+    io.to(roomId).emit('voice-channel-update', {
+        channelId,
+        users: userDetails
+    });
 }
 
 io.on('connection', (socket) => {
     console.log(`[Socket] Conectado: ${socket.id}`);
 
     // User joins a room
-    socket.on('join-room', (roomId) => {
+    socket.on('join-room', (data) => {
+        const roomId = typeof data === 'string' ? data : (data && data.roomId);
+        const username = (data && data.username) || `Gamer_${socket.id.substr(0, 4)}`;
+        const avatarColor = (data && data.avatarColor) || '#5865f2';
+
         if (!roomId) return;
         socket.join(roomId);
         socket.currentRoom = roomId;
 
         const room = getOrCreateRoom(roomId);
         room.listeners.add(socket.id);
+        room.users.set(socket.id, {
+            id: socket.id,
+            username,
+            avatarColor,
+            currentVoiceChannel: null,
+            isMuted: false,
+            isDeafened: false,
+            isSpeaking: false
+        });
 
-        console.log(`[Room] ${socket.id} entrou na sala: ${roomId} (Transmissor: ${room.broadcasterId || 'Nenhum'}, Ouvintes: ${room.listeners.size})`);
+        console.log(`[Room] ${username} (${socket.id}) entrou na sala: ${roomId}`);
 
         socket.emit('room-status', {
             roomId,
@@ -110,10 +148,198 @@ io.on('connection', (socket) => {
             listenerCount: room.listeners.size
         });
 
+        // Envia estado inicial do Discord (canais, mensagens e usuários de voz)
+        const voiceStateObj = {};
+        for (const [chId, setUsers] of room.voiceChannels.entries()) {
+            voiceStateObj[chId] = Array.from(setUsers).map(id => room.users.get(id)).filter(Boolean);
+        }
+
+        socket.emit('discord-init', {
+            messages: Object.fromEntries(room.messages.entries()),
+            voiceChannels: voiceStateObj,
+            users: Array.from(room.users.values())
+        });
+
+        io.to(roomId).emit('user-list-update', Array.from(room.users.values()));
+
         if (room.broadcasterId && room.broadcasterId !== socket.id) {
             io.to(room.broadcasterId).emit('listener-joined', {
                 listenerId: socket.id,
                 roomId
+            });
+        }
+    });
+
+    // --- MENSAGENS DE CHAT DE TEXTO (DISCORD) ---
+    socket.on('send-message', (data) => {
+        const { roomId, channelId, content } = data || {};
+        if (!roomId || !content || !content.trim()) return;
+
+        const room = rooms.get(roomId);
+        if (!room) return;
+
+        const user = room.users.get(socket.id) || { username: 'Convidado', avatarColor: '#5865f2' };
+        const msg = {
+            id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+            senderId: socket.id,
+            username: user.username,
+            avatarColor: user.avatarColor,
+            content: content.trim(),
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+
+        if (!room.messages.has(channelId)) {
+            room.messages.set(channelId, []);
+        }
+        const list = room.messages.get(channelId);
+        list.push(msg);
+        // Otimização de Memória RAM: Limitar histórico a no máximo 100 mensagens
+        if (list.length > 100) list.shift();
+
+        io.to(roomId).emit('new-message', { channelId, message: msg });
+    });
+
+    // --- CANAIS DE VOZ DO DISCORD ---
+    socket.on('join-voice-channel', (data) => {
+        const { roomId, channelId } = data || {};
+        const room = rooms.get(roomId || socket.currentRoom);
+        if (!room || !channelId) return;
+
+        const user = room.users.get(socket.id);
+        if (!user) return;
+
+        // Se o usuário já estava em outro canal de voz, remove ele primeiro
+        if (user.currentVoiceChannel && user.currentVoiceChannel !== channelId) {
+            const oldSet = room.voiceChannels.get(user.currentVoiceChannel);
+            if (oldSet) {
+                oldSet.delete(socket.id);
+                broadcastVoiceChannelState(roomId, user.currentVoiceChannel);
+                socket.to(roomId).emit('voice-peer-left', { channelId: user.currentVoiceChannel, peerId: socket.id });
+            }
+        }
+
+        user.currentVoiceChannel = channelId;
+        if (!room.voiceChannels.has(channelId)) {
+            room.voiceChannels.set(channelId, new Set());
+        }
+        const set = room.voiceChannels.get(channelId);
+        
+        // Pega os peers atuais antes de adicionar o novo
+        const existingPeers = Array.from(set);
+
+        set.add(socket.id);
+        broadcastVoiceChannelState(roomId, channelId);
+
+        // Notifica o próprio usuário da lista de peers existentes para conectar WebRTC Mesh
+        socket.emit('voice-joined-success', {
+            channelId,
+            existingPeers: existingPeers.map(id => room.users.get(id)).filter(Boolean)
+        });
+
+        // Notifica os outros membros do canal de voz que um novo usuário entrou
+        socket.to(roomId).emit('voice-peer-joined', {
+            channelId,
+            user
+        });
+    });
+
+    socket.on('leave-voice-channel', (data) => {
+        const roomId = (data && data.roomId) || socket.currentRoom;
+        const room = rooms.get(roomId);
+        if (!room) return;
+
+        const user = room.users.get(socket.id);
+        if (user && user.currentVoiceChannel) {
+            const chId = user.currentVoiceChannel;
+            const set = room.voiceChannels.get(chId);
+            if (set) {
+                set.delete(socket.id);
+                broadcastVoiceChannelState(roomId, chId);
+            }
+            user.currentVoiceChannel = null;
+            user.isSpeaking = false;
+
+            io.to(roomId).emit('voice-peer-left', { channelId: chId, peerId: socket.id });
+        }
+    });
+
+    // Atualização de estado de áudio (Mutado / Deafen / Indicador de Fala)
+    socket.on('update-voice-state', (data) => {
+        const roomId = socket.currentRoom;
+        const room = rooms.get(roomId);
+        if (!room) return;
+
+        const user = room.users.get(socket.id);
+        if (user) {
+            if (typeof data.isMuted === 'boolean') user.isMuted = data.isMuted;
+            if (typeof data.isDeafened === 'boolean') user.isDeafened = data.isDeafened;
+            if (typeof data.isSpeaking === 'boolean') user.isSpeaking = data.isSpeaking;
+
+            if (user.currentVoiceChannel) {
+                broadcastVoiceChannelState(roomId, user.currentVoiceChannel);
+                io.to(roomId).emit('voice-user-state-changed', {
+                    channelId: user.currentVoiceChannel,
+                    userId: socket.id,
+                    isMuted: user.isMuted,
+                    isDeafened: user.isDeafened,
+                    isSpeaking: user.isSpeaking
+                });
+            }
+        }
+    });
+
+    // Compartilhamento de Tela Múltiplo no VOIP
+    socket.on('voice-screen-started', (data) => {
+        const roomId = socket.currentRoom;
+        const room = rooms.get(roomId);
+        if (!room) return;
+        const user = room.users.get(socket.id);
+        if (user && user.currentVoiceChannel) {
+            socket.to(roomId).emit('voice-screen-started', {
+                channelId: user.currentVoiceChannel,
+                userId: socket.id,
+                username: user.username
+            });
+        }
+    });
+
+    socket.on('voice-screen-stopped', (data) => {
+        const roomId = socket.currentRoom;
+        const room = rooms.get(roomId);
+        if (!room) return;
+        const user = room.users.get(socket.id);
+        if (user && user.currentVoiceChannel) {
+            socket.to(roomId).emit('voice-screen-stopped', {
+                channelId: user.currentVoiceChannel,
+                userId: socket.id
+            });
+        }
+    });
+
+    // --- SINALIZAÇÃO WEBRTC MESH PARA VOZ DO DISCORD ---
+    socket.on('voice-signal-offer', (data) => {
+        if (data && data.targetId) {
+            io.to(data.targetId).emit('voice-signal-offer', {
+                senderId: socket.id,
+                sdp: data.sdp
+            });
+        }
+    });
+
+    socket.on('voice-signal-answer', (data) => {
+        if (data && data.targetId) {
+            io.to(data.targetId).emit('voice-signal-answer', {
+                senderId: socket.id,
+                sdp: data.sdp
+            });
+        }
+    });
+
+    socket.on('voice-signal-ice', (data) => {
+        if (data && data.targetId) {
+            io.to(data.targetId).emit('voice-signal-ice', {
+                senderId: socket.id,
+                candidate: data.candidate
             });
         }
     });
@@ -201,13 +427,27 @@ io.on('connection', (socket) => {
                 socket.to(roomId).emit('broadcaster-stopped', { roomId });
             }
             room.listeners.delete(socket.id);
+            const user = room.users.get(socket.id);
+            if (user && user.currentVoiceChannel) {
+                const chId = user.currentVoiceChannel;
+                const set = room.voiceChannels.get(chId);
+                if (set) {
+                    set.delete(socket.id);
+                    broadcastVoiceChannelState(roomId, chId);
+                }
+                socket.to(roomId).emit('voice-peer-left', { channelId: chId, peerId: socket.id });
+            }
+            room.users.delete(socket.id);
+            io.to(roomId).emit('user-list-update', Array.from(room.users.values()));
+
             if (room.broadcasterId) {
                 io.to(room.broadcasterId).emit('listener-left', {
                     listenerId: socket.id,
                     listenerCount: room.listeners.size
                 });
             }
-            if (!room.broadcasterId && room.listeners.size === 0) {
+            // Otimização de Memória RAM: expurgar salas completamente vazias
+            if (!room.broadcasterId && room.listeners.size === 0 && room.users.size === 0) {
                 rooms.delete(roomId);
             }
         }

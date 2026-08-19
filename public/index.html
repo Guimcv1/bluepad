@@ -3,37 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BluePad Audio & Screen | Transmissão de Som e Tela</title>
+    <title>BluePad Stream & Discord Voice Chat</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1 id="logo">Blue<span>Pad</span> Stream</h1>
-            <div id="room-display" class="room-badge hidden">
-                <span>Sala:</span> <strong id="room-id">...</strong>
+    <div class="app-container">
+        <!-- Cabeçalho Principal com Alternância de Modos -->
+        <header class="app-header">
+            <div class="header-left">
+                <h1 id="logo">Blue<span>Pad</span></h1>
+                <div id="room-display" class="room-badge hidden">
+                    <span>Sala:</span> <strong id="room-id">...</strong>
+                </div>
+            </div>
+            
+            <div class="mode-switcher hidden" id="mode-switcher">
+                <button id="nav-discord-btn" class="nav-tab active">
+                    <span class="tab-icon">💬</span> Chamada com Amigos (Discord)
+                </button>
+                <button id="nav-stream-btn" class="nav-tab">
+                    <span class="tab-icon">🎧</span> Sistema de Som & Tela
+                </button>
             </div>
         </header>
 
-        <main>
-            <!-- 1. Home View: Escolha de Sala -->
+        <main class="app-main">
+            <!-- 1. Home View: Escolha de Modo -->
             <div id="home-view" class="view">
-                <div class="card">
-                    <div class="card-icon">📺</div>
-                    <h2>Transmitir Som e Tela do PC</h2>
-                    <p>Transmita a tela e o áudio do seu computador diretamente para o seu celular via Wi-Fi ou Internet em tempo real.</p>
+                <div class="card home-card choice-card">
+                    <div class="card-icon">🚀</div>
+                    <h2>Como você deseja usar o BluePad?</h2>
+                    <p>Informe o nome da sala e escolha a experiência desejada:</p>
                     
                     <div class="input-group">
                         <span class="prefix">sala/</span>
-                        <input type="text" id="room-input" placeholder="ex: minhasala" autocomplete="off" autofocus>
+                        <input type="text" id="room-input" placeholder="ex: resenha" autocomplete="off" autofocus>
+                    </div>
+
+                    <div class="input-group nickname-group">
+                        <span class="prefix">seu nome/</span>
+                        <input type="text" id="nickname-input" placeholder="ex: Alex (Gamer)" autocomplete="off">
                     </div>
                     
-                    <button id="go-room" class="btn primary">Entrar na Sala</button>
+                    <div class="choice-grid">
+                        <button id="btn-choice-discord" class="btn choice-btn discord-choice">
+                            <div class="choice-icon">💬</div>
+                            <div class="choice-details">
+                                <strong>Chamada com Amigos (Discord)</strong>
+                                <small>Canal de voz ao vivo + Chat de texto e transmissão de tela</small>
+                            </div>
+                        </button>
+
+                        <button id="btn-choice-stream" class="btn choice-btn stream-choice">
+                            <div class="choice-icon">🎧</div>
+                            <div class="choice-details">
+                                <strong>Apenas Sistema de Som & Tela</strong>
+                                <small>Transmitir o áudio/tela do PC ou ouvir no celular</small>
+                            </div>
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            <!-- 2. Hub / Seleção de Modo (Ao entrar na sala) -->
+            <!-- 2. Hub / Seleção de Transmissão (Modo Clássico de Som & Tela) -->
             <div id="setup-view" class="view hidden">
                 <div class="card">
                     <!-- Status do transmissor na sala -->
@@ -44,7 +77,7 @@
 
                     <!-- Compartilhar com o celular -->
                     <div class="share-box" id="share-box">
-                        <span class="share-label">Abra no celular para assistir/ouvir:</span>
+                        <span class="share-label">Link para convidar amigos:</span>
                         <div class="share-url-container">
                             <span id="share-url" class="share-url">Carregando...</span>
                             <button id="copy-url-btn" class="btn-icon" title="Copiar link">📋</button>
@@ -52,36 +85,36 @@
                     </div>
 
                     <div class="action-grid">
-                        <button id="start-screen-broadcast-btn" class="btn primary-action highlighted">
-                            <div class="action-icon">🖥️</div>
+                        <button id="open-discord-mode-btn" class="btn primary-action highlighted full-row">
+                            <div class="action-icon">💬</div>
                             <div class="action-text">
-                                <strong>Transmitir Tela + Som</strong>
-                                <small>Vídeo em HD + Áudio do sistema</small>
+                                <strong>Alternar para Chamada com Amigos (Discord)</strong>
+                                <small>Entrar na conversa em grupo</small>
                             </div>
                         </button>
 
-                        <button id="start-broadcast-btn" class="btn secondary-action">
-                            <div class="action-icon">🎧</div>
+                        <button id="start-screen-broadcast-btn" class="btn secondary-action">
+                            <div class="action-icon">🖥️</div>
                             <div class="action-text">
-                                <strong>Transmitir Apenas Som</strong>
-                                <small>Somente áudio (Modo economia)</small>
+                                <strong>Transmitir Tela + Som (PC)</strong>
+                                <small>Vídeo HD + Áudio do sistema</small>
                             </div>
                         </button>
 
                         <button id="start-listen-btn" class="btn secondary-action">
                             <div class="action-icon">📱</div>
                             <div class="action-text">
-                                <strong>Receber neste Dispositivo</strong>
+                                <strong>Receber Transmissão</strong>
                                 <small>Assistir / Ouvir no celular</small>
                             </div>
                         </button>
                     </div>
 
-                    <p class="hint">⚠️ Ao transmitir no PC, marque <strong>"Compartilhar áudio"</strong> na janela que abrir.</p>
+                    <p class="hint">⚠️ Ao transmitir no PC, lembre-se de marcar <strong>"Compartilhar áudio"</strong>.</p>
                 </div>
             </div>
 
-            <!-- 3. Broadcaster View (PC Transmitindo) -->
+            <!-- 3. Broadcaster View (PC Transmitindo Tela) -->
             <div id="stream-view" class="view hidden">
                 <div class="card">
                     <div class="status-indicator">
@@ -116,7 +149,7 @@
                 </div>
             </div>
 
-            <!-- 4. Receiver View (Celular Assistindo/Ouvindo) -->
+            <!-- 4. Receiver View (Celular Assistindo Tela) -->
             <div id="receiver-view" class="view hidden">
                 <div class="card">
                     <h2>Receptor de Mídia</h2>
@@ -168,19 +201,212 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 5. DISCORD VIEW (Interface Idêntica ao Discord) -->
+            <div id="discord-view" class="view hidden discord-app">
+                <!-- Bar de Servidores (Extrema Esquerda) -->
+                <aside class="discord-servers-bar">
+                    <div class="server-icon active" title="Servidor Atual">
+                        <span class="server-initial" id="discord-server-initial">BP</span>
+                    </div>
+                    <div class="server-divider"></div>
+                    <div class="server-icon add-server" id="discord-home-btn" title="Ir para início">
+                        <span>🏠</span>
+                    </div>
+                </aside>
+
+                <!-- Bar de Canais (Esquerda) -->
+                <aside class="discord-channels-sidebar">
+                    <!-- Banner / Nome do Servidor -->
+                    <div class="server-header">
+                        <h3 id="discord-server-title">Servidor BluePad</h3>
+                        <span class="server-dropdown-icon">⌄</span>
+                    </div>
+
+                    <!-- Lista de Canais (Apenas 1 Canal de Texto e 1 Canal de Voz por Sala) -->
+                    <div class="channels-scroll">
+                        <!-- Canal de Texto -->
+                        <div class="channel-category">
+                            <span class="category-title">⌄ CANAIS DE TEXTO</span>
+                            <div class="channel-item active" data-channel-id="geral" data-channel-type="text">
+                                <span class="channel-prefix">#</span>
+                                <span class="channel-name">geral</span>
+                            </div>
+                        </div>
+
+                        <!-- Canal de Voz -->
+                        <div class="channel-category">
+                            <span class="category-title">⌄ CANAIS DE VOZ</span>
+                            <div class="channel-item" data-channel-id="v-geral" data-channel-type="voice">
+                                <span class="channel-prefix">🔊</span>
+                                <span class="channel-name">Canal de Voz</span>
+                                <span class="channel-badge" id="badge-v-geral">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Rodapé de Status do Canal de Voz Conectado -->
+                    <div id="voice-connected-bar" class="voice-connected-bar hidden">
+                        <div class="voice-connection-info">
+                            <div class="voice-signal-icon green">📶</div>
+                            <div class="voice-text-details">
+                                <span class="voice-status-title">Voz Conectada</span>
+                                <span class="voice-channel-name-display" id="voice-active-name">Canal de Voz</span>
+                            </div>
+                        </div>
+
+                        <!-- Botões de Controle de Voz + Compartilhar Tela -->
+                        <div class="voice-quick-controls">
+                            <button id="btn-mic-toggle" class="control-btn" title="Mutar/Desmutar Microfone">
+                                🎤
+                            </button>
+                            <button id="btn-deafen-toggle" class="control-btn" title="Desativar/Ativar Áudio">
+                                🎧
+                            </button>
+                            <button id="btn-voice-screenshare" class="control-btn" title="Transmitir Tela na Chamada (VOIP)">
+                                🖥️
+                            </button>
+                            <button id="btn-voice-disconnect" class="control-btn disconnect-btn" title="Desconectar da Voz">
+                                📞
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Rodapé de Perfil do Usuário e Botão de Configurações -->
+                    <div class="user-profile-bar">
+                        <div class="user-avatar-small" id="my-avatar">
+                            <span id="my-avatar-letter">G</span>
+                            <span class="user-status-dot online"></span>
+                        </div>
+                        <div class="user-info-text">
+                            <span class="user-name" id="my-username">Gamer</span>
+                            <span class="user-tag" id="my-usertag">#0001</span>
+                        </div>
+                        <button id="btn-open-settings" class="btn-settings-icon" title="Configurar Dispositivos de Áudio (Microfone e Fone)">
+                            ⚙️
+                        </button>
+                    </div>
+                </aside>
+
+                <!-- Área Central de Conteúdo (Chat ou Canais de Voz) -->
+                <section class="discord-main-area">
+                    <!-- Visão do Chat de Texto -->
+                    <div id="discord-text-workspace" class="workspace-panel">
+                        <div class="workspace-header">
+                            <span class="header-hashtag">#</span>
+                            <h3 id="current-channel-title">geral</h3>
+                            <span class="header-divider">|</span>
+                            <span class="header-topic">Canal principal de conversas e mensagens da sala.</span>
+                        </div>
+
+                        <div class="messages-container" id="chat-messages">
+                            <!-- Mensagens serão inseridas via JavaScript -->
+                        </div>
+
+                        <!-- Formulário de Envio de Mensagem -->
+                        <form id="chat-form" class="chat-form">
+                            <input type="text" id="chat-input" placeholder="Conversar em #geral" autocomplete="off">
+                            <button type="submit" class="btn-send-chat">Enviar</button>
+                        </form>
+                    </div>
+
+                    <!-- Visão do Canal de Voz -->
+                    <div id="discord-voice-workspace" class="workspace-panel hidden">
+                        <div class="workspace-header">
+                            <span class="header-hashtag">🔊</span>
+                            <h3 id="voice-workspace-title">Canal de Voz</h3>
+                            <span class="header-divider">|</span>
+                            <span class="header-topic">Canal de áudio ao vivo e comunicação de voz.</span>
+                        </div>
+
+                        <div class="voice-channel-body">
+                            <!-- Container para Transmissão de Tela Expandida / Focada -->
+                            <div id="focused-screenshare-container" class="focused-screenshare-container hidden">
+                                <div class="screenshare-header">
+                                    <div class="header-title-wrapper">
+                                        <span class="pulse-dot">🔴</span>
+                                        <span id="focused-screenshare-title">Transmissão de Tela ao Vivo</span>
+                                    </div>
+                                    <div class="header-action-buttons">
+                                        <button id="btn-fullscreen-focus" class="btn-focus-action" title="Tela Cheia Total no Navegador">⛶ Fullscreen</button>
+                                        <button id="btn-close-focus" class="btn-close-focus" title="Minimizar Tela">🗗 Minimizar</button>
+                                    </div>
+                                </div>
+                                <video id="focused-screenshare-video" autoplay playsinline class="focused-screenshare-video"></video>
+                            </div>
+
+                            <!-- Grid de Transmissões de Tela Minimizadas de Vários Usuários -->
+                            <div id="voice-streams-grid" class="voice-streams-grid hidden">
+                                <!-- Cards minimizados de telas serão renderizados dinamicamente -->
+                            </div>
+
+                            <!-- Grid de Membros Conectados na Voz -->
+                            <div class="voice-members-grid" id="voice-members-grid">
+                                <!-- Cards de participantes serão renderizados dinamicamente -->
+                            </div>
+
+                            <!-- Botões de Ação para Canal de Voz -->
+                            <div class="voice-actions-footer">
+                                <button id="btn-join-current-voice" class="btn voice-btn-join">
+                                    🎙️ Entrar neste Canal de Voz
+                                </button>
+                                <button id="btn-voice-screenshare-big" class="btn voice-btn-screenshare secondary">
+                                    🖥️ Transmitir Tela na Chamada
+                                </button>
+                                <button id="btn-leave-current-voice" class="btn voice-btn-leave danger hidden">
+                                    📞 Sair do Canal de Voz
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Sidebar Direita: Lista de Membros da Sala -->
+                <aside class="discord-members-sidebar">
+                    <div class="members-category">
+                        <span>ONLINE — <strong id="online-users-count">1</strong></span>
+                    </div>
+                    <div class="members-list" id="discord-members-list">
+                        <!-- Membros renderizados via JS -->
+                    </div>
+                </aside>
+            </div>
         </main>
 
-        <!-- Elemento de áudio invisível fallback -->
-        <audio id="remote-audio" autoplay playsinline webkit-playsinline></audio>
+        <!-- Modal / Painel de Configuração de Dispositivos (Microfone e Saída de Som) -->
+        <div id="device-settings-modal" class="modal-backdrop hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h3>⚙️ Configurações de Áudio e Dispositivos</h3>
+                    <button id="btn-close-settings" class="modal-close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="setting-item">
+                        <label for="mic-select">🎙️ Microfone (Dispositivo de Entrada):</label>
+                        <select id="mic-select" class="device-select">
+                            <option value="">Carregando microfones...</option>
+                        </select>
+                    </div>
 
-        <!-- Seção de depuração (recolhível) -->
-        <div class="debug-section">
-            <button id="toggle-debug-btn" class="debug-toggle">Log de Diagnóstico</button>
-            <div id="debug-log" class="debug-log hidden"></div>
+                    <div class="setting-item">
+                        <label for="speaker-select">🔊 Fone / Auto-falantes (Dispositivo de Saída):</label>
+                        <select id="speaker-select" class="device-select">
+                            <option value="">Carregando saídas de som...</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-save-settings" class="btn primary">Salvar e Aplicar</button>
+                </div>
+            </div>
         </div>
 
-        <footer>
-            <p>&copy; 2026 BluePad Stream &bull; P2P de Baixa Latência</p>
+        <!-- Elementos de Mídia Invisíveis para P2P Mesh -->
+        <div id="voice-audio-container" style="display: none;"></div>
+        <audio id="remote-audio" autoplay playsinline webkit-playsinline></audio>
+
+        <footer class="app-footer">
+            <p>&copy; 2026 BluePad Stream & Discord Voice &bull; P2P de Alta Performance</p>
         </footer>
     </div>
 
