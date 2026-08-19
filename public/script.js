@@ -105,7 +105,7 @@ const myUsertagEl = document.getElementById('my-usertag');
 const onlineUsersCount = document.getElementById('online-users-count');
 const discordMembersList = document.getElementById('discord-members-list');
 
-// MODAL DE CONFIGURAÇÃO DE DISPOSITIVOS DE ÁUDIO
+// MODAL DE CONFIGURAÇÃO DE DISPOSITIVOS DE ÁUDIO E VOLUME
 const deviceSettingsModal = document.getElementById('device-settings-modal');
 const btnOpenSettings = document.getElementById('btn-open-settings');
 const btnCloseSettings = document.getElementById('btn-close-settings');
@@ -119,7 +119,6 @@ const voiceVolumeValDisplay = document.getElementById('voice-volume-val-display'
 let masterVoiceVolume = parseFloat(localStorage.getItem('bluepad_voice_volume') || '1.0');
 let masterAudioCtx = null;
 let masterGainNode = null;
-const voicePeerGainNodes = new Map();
 
 function getMasterAudioContext() {
     if (!masterAudioCtx) {
@@ -146,7 +145,7 @@ if (voiceVolumeSlider) {
             voiceVolumeValDisplay.textContent = `${Math.round(val * 100)}%`;
         }
         if (masterGainNode) {
-            masterGainNode.gain.value = val; // Amplifica o som em até 200% (2.0x)
+            masterGainNode.gain.value = val;
         }
     };
 }
@@ -164,10 +163,10 @@ let rtcConfig = {
 let currentRoomId = null;
 let currentView = 'home';
 
-// Perfil do Usuário (Nome em branco se for a 1ª vez!)
+// Perfil do Usuário (Nome em branco se for a 1ª vez! Máximo 15 caracteres)
 const AVATAR_COLORS = ['#5865f2', '#38bdf8', '#23a55a', '#f0b232', '#eb459e', '#9b59b6', '#e74c3c'];
 const savedNickname = getCookie('bluepad_nickname') || localStorage.getItem('bluepad_nickname') || '';
-let myUsername = savedNickname;
+let myUsername = savedNickname.substring(0, 15);
 let myAvatarColor = localStorage.getItem('bluepad_color') || AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
 let myUserTag = `#${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -175,7 +174,6 @@ let myUserTag = `#${Math.floor(1000 + Math.random() * 9000)}`;
 let selectedMicId = localStorage.getItem('bluepad_selected_mic') || 'default';
 let selectedSpeakerId = localStorage.getItem('bluepad_selected_speaker') || 'default';
 
-// Preenche em branco se não houver cookie/localStorage salvo
 if (nicknameInput) nicknameInput.value = myUsername;
 
 // Estado da Transmissão Clássica
@@ -203,7 +201,7 @@ let localVoiceStream = null;
 let localVoiceScreenStream = null;
 let voiceAnalyzerLoopId = null;
 
-// Mapa de Transmissões de Tela Ativas no VOIP: streamId -> { id, userId, username, stream }
+// Mapa de Transmissões de Tela Ativas no VOIP: streamId -> { id, userId, username, stream, isRenderedInCard }
 const activeScreenStreams = new Map();
 let focusedScreenId = null;
 
@@ -234,7 +232,6 @@ if (currentRoomId && roomInput) {
     roomInput.value = currentRoomId;
 }
 
-// Sempre exibir a tela de escolha inicial ao acessar
 showView('home');
 
 function getSelectedRoom() {
@@ -291,7 +288,7 @@ function initRoom(roomId) {
     if (discordServerInitial) discordServerInitial.textContent = roomId.substring(0, 2).toUpperCase();
 
     if (nicknameInput && nicknameInput.value.trim()) {
-        myUsername = nicknameInput.value.trim();
+        myUsername = nicknameInput.value.trim().substring(0, 15);
         setCookie('bluepad_nickname', myUsername);
         localStorage.setItem('bluepad_nickname', myUsername);
     }
@@ -339,7 +336,7 @@ if (goRoomBtn && roomInput) {
     const handleJoin = () => {
         const keyword = roomInput.value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
         if (nicknameInput && nicknameInput.value.trim()) {
-            myUsername = nicknameInput.value.trim();
+            myUsername = nicknameInput.value.trim().substring(0, 15);
             setCookie('bluepad_nickname', myUsername);
             localStorage.setItem('bluepad_nickname', myUsername);
         }
@@ -813,7 +810,6 @@ async function startVoiceScreenShare() {
 
         const videoTrack = stream.getVideoTracks()[0];
 
-        // Adicionar transmissão local ao mapa de telas ativas
         activeScreenStreams.set('local_screen', {
             id: 'local_screen',
             userId: socket.id,
@@ -829,14 +825,17 @@ async function startVoiceScreenShare() {
         if (videoTrack) {
             videoTrack.onended = () => stopVoiceScreenShare();
 
-            // Substitui a faixa de vídeo instantaneamente nas conexões P2P ativas sem colisão de SDP
+            // Adiciona a faixa de vídeo e envia a nova oferta de renegociação SDP para todos os peers conectados
             voicePeers.forEach(({ pc }, peerId) => {
-                const senders = pc.getSenders();
-                let videoSender = senders.find(s => (s.track && s.track.kind === 'video') || (s.searchKind === 'video'));
-                if (videoSender) {
-                    videoSender.replaceTrack(videoTrack);
-                } else {
-                    try { pc.addTrack(videoTrack, localVoiceScreenStream); } catch (e) {}
+                try {
+                    pc.addTrack(videoTrack, localVoiceScreenStream);
+                    pc.createOffer().then(offer => {
+                        return pc.setLocalDescription(offer);
+                    }).then(() => {
+                        socket.emit('voice-signal-offer', { targetId: peerId, sdp: pc.localDescription });
+                    }).catch(e => log(`Renegotiation offer error: ${e.message}`));
+                } catch (e) {
+                    log(`addTrack error: ${e.message}`);
                 }
             });
         }
@@ -852,7 +851,6 @@ async function startVoiceScreenShare() {
 function stopVoiceScreenShare() {
     isVoiceScreenSharing = false;
 
-    // Reseta o sender de vídeo de todos os peers via replaceTrack(null) sem quebrar o P2P
     voicePeers.forEach(({ pc }) => {
         try {
             const senders = pc.getSenders();
@@ -891,7 +889,6 @@ function renderVoiceStreamsGrid() {
     if (!voiceStreamsGrid) return;
     voiceStreamsGrid.innerHTML = '';
 
-    // Filtra transmissões ativas excluindo a que já está focada/expandida em destaque
     const unfocusedStreams = Array.from(activeScreenStreams.entries()).filter(([id]) => id !== focusedScreenId);
 
     if (unfocusedStreams.length === 0) {
@@ -906,7 +903,6 @@ function renderVoiceStreamsGrid() {
         card.className = 'stream-tile-card';
 
         if (item.isRenderedInCard) {
-            // RENDERIZAÇÃO EM TELA PEQUENA (Mini-Player na Miniatura)
             const video = document.createElement('video');
             video.autoplay = true;
             video.playsInline = true;
@@ -940,7 +936,6 @@ function renderVoiceStreamsGrid() {
             card.appendChild(overlay);
 
         } else {
-            // MODO ECONÔMICO (Apenas Placeholder com Carregamento sob demanda)
             card.innerHTML = `
                 <div class="stream-placeholder-body">
                     <div class="stream-placeholder-icon">🖥️</div>
@@ -968,7 +963,6 @@ function focusScreenStream(streamId) {
     const item = activeScreenStreams.get(streamId);
     focusedScreenId = streamId;
 
-    // Se o stream for nulo, busca o vídeo diretamente do receiver WebRTC do peer
     if (!item.stream && voicePeers.has(streamId)) {
         const { pc } = voicePeers.get(streamId);
         const receivers = pc.getReceivers();
@@ -995,7 +989,7 @@ function closeFocusScreenStream() {
     focusedScreenId = null;
     if (focusedScreenshareVideo) {
         focusedScreenshareVideo.pause();
-        focusedScreenshareVideo.srcObject = null; // Libera GPU, RAM e renderização imediatamente
+        focusedScreenshareVideo.srcObject = null;
     }
     if (focusedScreenshareContainer) focusedScreenshareContainer.classList.add('hidden');
     renderVoiceStreamsGrid();
@@ -1069,7 +1063,6 @@ socket.on('voice-peer-joined', (data) => {
     log(`Novo usuário entrou na voz: ${user.username} (${user.id})`);
     createVoicePeerConnection(user.id, false, user.username);
 
-    // Se EU estiver transmitindo a tela no momento, avisa o novo participante imediatamente!
     if (isVoiceScreenSharing && localVoiceScreenStream) {
         socket.emit('voice-screen-started', { roomId: currentRoomId });
     }
@@ -1136,13 +1129,12 @@ async function createVoicePeerConnection(peerId, isInitiator, peerUsername = 'Am
         if (event.track.kind === 'video') {
             const videoStream = event.streams[0] || new MediaStream([event.track]);
             
-            // APENAS processa o vídeo se este participante REALMENTE iniciou uma transmissão de tela
             if (activeScreenStreams.has(peerId)) {
                 const existing = activeScreenStreams.get(peerId);
                 existing.stream = videoStream;
 
                 event.track.onunmute = () => {
-                    log(`Primeiro frame de vídeo de ${peerId} desmutado (renderizando!)`);
+                    log(`Primeiro frame de vídeo de ${peerId} desmutado!`);
                     renderVoiceStreamsGrid();
                     if (focusedScreenId === peerId && focusedScreenshareVideo) {
                         focusedScreenshareVideo.srcObject = videoStream;
@@ -1159,7 +1151,6 @@ async function createVoicePeerConnection(peerId, isInitiator, peerUsername = 'Am
             audioElem.muted = isDeafened;
             audioElem.play().catch(e => {});
 
-            // Roteia o áudio recebido através do amplificador Web Audio API GainNode (Suporta volume de 0% até 200%!)
             try {
                 const { ctx, gain } = getMasterAudioContext();
                 const source = ctx.createMediaStreamSource(audioStream);
@@ -1243,7 +1234,7 @@ socket.on('voice-signal-ice', async (data) => {
     }
 });
 
-// --- DETECTOR DE FALA AO VIVO (INDICADOR VERDE NO AVATAR) ---
+// --- DETECTOR DE FALA AO VIVO ---
 
 function startLiveSpeechDetection(stream) {
     stopLiveSpeechDetection();
