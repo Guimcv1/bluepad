@@ -1180,10 +1180,40 @@ html, body {
     gap: 6px;
 }
 
+.setting-label-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
 .setting-item label {
     font-size: 0.85rem;
     font-weight: 600;
     color: var(--dc-text-normal);
+}
+
+.volume-badge {
+    background-color: var(--dc-brand);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+.volume-slider-input {
+    width: 100%;
+    accent-color: var(--dc-brand);
+    cursor: pointer;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    outline: none;
+}
+
+.setting-hint {
+    font-size: 0.75rem;
+    color: var(--dc-text-muted);
 }
 
 .device-select {

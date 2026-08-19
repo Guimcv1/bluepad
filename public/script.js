@@ -112,6 +112,44 @@ const btnCloseSettings = document.getElementById('btn-close-settings');
 const btnSaveSettings = document.getElementById('btn-save-settings');
 const micSelect = document.getElementById('mic-select');
 const speakerSelect = document.getElementById('speaker-select');
+const voiceVolumeSlider = document.getElementById('voice-volume-slider');
+const voiceVolumeValDisplay = document.getElementById('voice-volume-val-display');
+
+// Gerenciador de Volume e Amplificador Web Audio API (Até 200% de ganho!)
+let masterVoiceVolume = parseFloat(localStorage.getItem('bluepad_voice_volume') || '1.0');
+let masterAudioCtx = null;
+let masterGainNode = null;
+const voicePeerGainNodes = new Map();
+
+function getMasterAudioContext() {
+    if (!masterAudioCtx) {
+        masterAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGainNode = masterAudioCtx.createGain();
+        masterGainNode.gain.value = masterVoiceVolume;
+        masterGainNode.connect(masterAudioCtx.destination);
+    }
+    if (masterAudioCtx.state === 'suspended') {
+        masterAudioCtx.resume();
+    }
+    return { ctx: masterAudioCtx, gain: masterGainNode };
+}
+
+if (voiceVolumeSlider) {
+    voiceVolumeSlider.value = masterVoiceVolume;
+    if (voiceVolumeValDisplay) voiceVolumeValDisplay.textContent = `${Math.round(masterVoiceVolume * 100)}%`;
+
+    voiceVolumeSlider.oninput = () => {
+        const val = parseFloat(voiceVolumeSlider.value);
+        masterVoiceVolume = val;
+        localStorage.setItem('bluepad_voice_volume', val);
+        if (voiceVolumeValDisplay) {
+            voiceVolumeValDisplay.textContent = `${Math.round(val * 100)}%`;
+        }
+        if (masterGainNode) {
+            masterGainNode.gain.value = val; // Amplifica o som em até 200% (2.0x)
+        }
+    };
+}
 
 // Configuração WebRTC
 let rtcConfig = {
@@ -539,6 +577,15 @@ socket.on('voice-user-state-changed', (data) => {
 
 socket.on('voice-screen-started', (data) => {
     log(`Transmissão de tela iniciada pelo usuário ${data.username} (${data.userId})`);
+    if (!activeScreenStreams.has(data.userId) && data.userId !== socket.id) {
+        activeScreenStreams.set(data.userId, {
+            id: data.userId,
+            userId: data.userId,
+            username: data.username,
+            stream: null
+        });
+        renderVoiceStreamsGrid();
+    }
 });
 
 socket.on('voice-screen-stopped', (data) => {
@@ -956,6 +1003,15 @@ socket.on('voice-joined-success', async (data) => {
 
     for (const peerUser of existingPeers) {
         if (peerUser.id !== socket.id) {
+            if (peerUser.isScreenSharing) {
+                activeScreenStreams.set(peerUser.id, {
+                    id: peerUser.id,
+                    userId: peerUser.id,
+                    username: peerUser.username,
+                    stream: null
+                });
+                renderVoiceStreamsGrid();
+            }
             await createVoicePeerConnection(peerUser.id, true, peerUser.username);
         }
     }
@@ -965,6 +1021,11 @@ socket.on('voice-peer-joined', (data) => {
     const { user } = data;
     log(`Novo usuário entrou na voz: ${user.username} (${user.id})`);
     createVoicePeerConnection(user.id, false, user.username);
+
+    // Se EU estiver transmitindo a tela no momento, avisa o novo participante imediatamente!
+    if (isVoiceScreenSharing && localVoiceScreenStream) {
+        socket.emit('voice-screen-started', { roomId: currentRoomId });
+    }
 });
 
 socket.on('voice-peer-left', (data) => {
@@ -1036,6 +1097,15 @@ async function createVoicePeerConnection(peerId, isInitiator, peerUsername = 'Am
             audioElem.srcObject = stream;
             audioElem.muted = isDeafened;
             audioElem.play().catch(e => {});
+
+            // Roteia o áudio recebido através do amplificador Web Audio API GainNode (Suporta volume de 0% até 200%!)
+            try {
+                const { ctx, gain } = getMasterAudioContext();
+                const source = ctx.createMediaStreamSource(stream);
+                source.connect(gain);
+            } catch (e) {
+                log(`Web Audio Gain Routing info: ${e.message}`);
+            }
         }
     };
 

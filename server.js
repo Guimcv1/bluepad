@@ -233,7 +233,18 @@ io.on('connection', (socket) => {
         // Notifica o próprio usuário da lista de peers existentes para conectar WebRTC Mesh
         socket.emit('voice-joined-success', {
             channelId,
-            existingPeers: existingPeers.map(id => room.users.get(id)).filter(Boolean)
+            existingPeers: existingPeers.map(id => {
+                const u = room.users.get(id);
+                return u ? {
+                    id: u.id,
+                    username: u.username,
+                    avatarColor: u.avatarColor,
+                    isMuted: u.isMuted,
+                    isDeafened: u.isDeafened,
+                    isSpeaking: u.isSpeaking,
+                    isScreenSharing: !!u.isScreenSharing
+                } : null;
+            }).filter(Boolean)
         });
 
         // Notifica os outros membros do canal de voz que um novo usuário entrou
@@ -258,6 +269,7 @@ io.on('connection', (socket) => {
             }
             user.currentVoiceChannel = null;
             user.isSpeaking = false;
+            user.isScreenSharing = false;
 
             io.to(roomId).emit('voice-peer-left', { channelId: chId, peerId: socket.id });
         }
@@ -295,6 +307,7 @@ io.on('connection', (socket) => {
         if (!room) return;
         const user = room.users.get(socket.id);
         if (user && user.currentVoiceChannel) {
+            user.isScreenSharing = true;
             socket.to(roomId).emit('voice-screen-started', {
                 channelId: user.currentVoiceChannel,
                 userId: socket.id,
@@ -308,11 +321,14 @@ io.on('connection', (socket) => {
         const room = rooms.get(roomId);
         if (!room) return;
         const user = room.users.get(socket.id);
-        if (user && user.currentVoiceChannel) {
-            socket.to(roomId).emit('voice-screen-stopped', {
-                channelId: user.currentVoiceChannel,
-                userId: socket.id
-            });
+        if (user) {
+            user.isScreenSharing = false;
+            if (user.currentVoiceChannel) {
+                socket.to(roomId).emit('voice-screen-stopped', {
+                    channelId: user.currentVoiceChannel,
+                    userId: socket.id
+                });
+            }
         }
     });
 

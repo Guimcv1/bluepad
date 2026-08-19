@@ -394,6 +394,15 @@
                             <option value="">Carregando saídas de som...</option>
                         </select>
                     </div>
+
+                    <div class="setting-item">
+                        <div class="setting-label-header">
+                            <label for="voice-volume-slider">📢 Volume da Chamada / Amplificador:</label>
+                            <span id="voice-volume-val-display" class="volume-badge">100%</span>
+                        </div>
+                        <input type="range" id="voice-volume-slider" min="0" max="2" step="0.05" value="1.0" class="volume-slider-input">
+                        <small class="setting-hint">🚀 Permite amplificar o som dos seus amigos em até <strong>200%</strong>!</small>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button id="btn-save-settings" class="btn primary">Salvar e Aplicar</button>
