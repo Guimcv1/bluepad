@@ -1,4 +1,4 @@
-// BluePad Audio - Script Principal
+// BluePad Stream - Script Principal (Áudio + Tela)
 const socket = io();
 
 // Elementos do DOM
@@ -17,15 +17,25 @@ const roomStatusText = document.getElementById('room-status-text');
 const shareUrlEl = document.getElementById('share-url');
 const copyUrlBtn = document.getElementById('copy-url-btn');
 
+const startScreenBroadcastBtn = document.getElementById('start-screen-broadcast-btn');
 const startBroadcastBtn = document.getElementById('start-broadcast-btn');
 const startListenBtn = document.getElementById('start-listen-btn');
 const stopBroadcastBtn = document.getElementById('stop-broadcast-btn');
 const listenerCountText = document.getElementById('listener-count-text');
+const streamModeTitle = document.getElementById('stream-mode-title');
+
+const localVideoContainer = document.getElementById('local-video-container');
+const localVideo = document.getElementById('local-video');
 
 const receiverDot = document.getElementById('receiver-dot');
 const receiverStatusText = document.getElementById('receiver-status-text');
 const audioUnlockContainer = document.getElementById('audio-unlock-container');
 const unlockAudioBtn = document.getElementById('unlock-audio-btn');
+
+const videoContainer = document.getElementById('video-container');
+const remoteVideo = document.getElementById('remote-video');
+const fullscreenBtn = document.getElementById('fullscreen-btn');
+
 const playbackPanel = document.getElementById('playback-panel');
 const volumeSlider = document.getElementById('volume-slider');
 const reconnectBtn = document.getElementById('reconnect-btn');
@@ -35,7 +45,7 @@ const remoteAudio = document.getElementById('remote-audio');
 const toggleDebugBtn = document.getElementById('toggle-debug-btn');
 const debugLog = document.getElementById('debug-log');
 
-// Configuração WebRTC Ultrarrápida (< 100ms de latência e conexão instantânea)
+// Configuração WebRTC Ultrarrápida (< 100ms de latência)
 let rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -47,6 +57,7 @@ let rtcConfig = {
 // Variáveis de Estado
 let currentRoomId = null;
 let isBroadcaster = false;
+let isVideoEnabled = true;
 let localStream = null;
 let audioContext = null;
 
@@ -100,7 +111,7 @@ function initRoom(roomId) {
         .then(data => {
             if (data.iceServers && data.iceServers.length > 0) {
                 rtcConfig.iceServers = data.iceServers;
-                log(`STUN carregado: ${data.iceServers.length} servidores configurados.`);
+                log(`STUN/TURN carregado: ${data.iceServers.length} servidores configurados.`);
             }
 
             if (window.location.hostname !== 'localhost' && !window.location.hostname.startsWith('192.168.')) {
@@ -190,7 +201,9 @@ socket.on('broadcaster-stopped', () => {
     if (!isBroadcaster) {
         receiverDot.className = 'dot gray';
         receiverStatusText.textContent = 'Transmissão encerrada pelo PC.';
+        videoContainer.classList.add('hidden');
         playbackPanel.classList.add('hidden');
+        if (remoteVideo) remoteVideo.pause();
         if (remoteAudio) remoteAudio.pause();
     }
 });
@@ -204,7 +217,7 @@ socket.on('listener-joined', (data) => {
 
 socket.on('listener-ready', (data) => {
     if (isBroadcaster && localStream) {
-        log(`Ouvinte (${data.listenerId}) pronto para áudio. Criando oferta SDP...`);
+        log(`Ouvinte (${data.listenerId}) pronto. Criando oferta SDP...`);
         initiateBroadcasterCall(data.listenerId);
     }
 });
@@ -221,7 +234,7 @@ function updateBroadcasterStatusIndicator(isLive) {
     if (!roomStatusPill || !roomStatusText) return;
     if (isLive) {
         roomStatusPill.className = 'status-pill live';
-        roomStatusText.textContent = 'PC transmitindo áudio ao vivo!';
+        roomStatusText.textContent = 'PC transmitindo ao vivo!';
     } else {
         roomStatusPill.className = 'status-pill idle';
         roomStatusText.textContent = 'Nenhum PC transmitindo no momento';
@@ -230,65 +243,84 @@ function updateBroadcasterStatusIndicator(isLive) {
 
 function updateListenerCount(count) {
     if (listenerCountText) {
-        listenerCountText.textContent = `${count} ${count === 1 ? 'ouvinte conectado' : 'ouvintes conectados'}`;
+        listenerCountText.textContent = `${count} ${count === 1 ? 'dispositivo conectado' : 'dispositivos conectados'}`;
     }
 }
 
 // --- LÓGICA DO TRANSMISSOR (PC) ---
 
-if (startBroadcastBtn) {
-    startBroadcastBtn.onclick = async () => {
-        log('Iniciando captura de áudio no PC...');
-        try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-                throw new Error('Navegador não suporta captura sem HTTPS. Em hospedagem pública acesse via https://');
-            }
+async function startBroadcasting(withVideo = true) {
+    isVideoEnabled = withVideo;
+    log(`Iniciando transmissão no PC (Tela + Áudio: ${withVideo})...`);
+    try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            throw new Error('Navegador não suporta captura sem HTTPS. Em hospedagem pública acesse via https://');
+        }
 
-            const stream = await navigator.mediaDevices.getDisplayMedia({
-                video: true,
-                audio: true
-            });
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+                width: { max: 1920 },
+                height: { max: 1080 },
+                frameRate: { max: 30 }
+            },
+            audio: true
+        });
 
-            const audioTracks = stream.getAudioTracks();
-            if (audioTracks.length === 0) {
-                stream.getTracks().forEach(t => t.stop());
-                throw new Error('Atenção: Marque a opção "Compartilhar áudio" na janela do navegador!');
-            }
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length === 0) {
+            stream.getTracks().forEach(t => t.stop());
+            throw new Error('Atenção: Marque a opção "Compartilhar áudio" na janela do navegador!');
+        }
 
-            log(`Faixa de áudio ativada: ${audioTracks[0].label}`);
+        const videoTracks = stream.getVideoTracks();
 
-            // Desativa/remove a faixa de vídeo
-            const videoTracks = stream.getVideoTracks();
+        if (!withVideo) {
+            // Se o usuário quer apenas som, desativa o vídeo
             videoTracks.forEach(v => {
                 v.stop();
                 stream.removeTrack(v);
             });
-
-            localStream = stream;
-            isBroadcaster = true;
-
-            audioTracks[0].onended = () => {
-                log('Captura de áudio encerrada pelo usuário.');
-                stopBroadcasting();
-            };
-
-            log('Áudio capturado! Notificando sala...');
-            showView('stream');
-            setupVisualizer(localStream, 'broadcaster-visualizer');
-
-            socket.emit('broadcaster-start', currentRoomId);
-
-        } catch (err) {
-            log(`Erro ao iniciar transmissão: ${err.message}`);
-            alert(`Erro ao transmitir: ${err.message}`);
+            localVideoContainer.classList.add('hidden');
+            if (streamModeTitle) streamModeTitle.textContent = 'Transmitindo Apenas Áudio';
+        } else {
+            // Transmissão de Tela + Áudio ativada
+            if (videoTracks.length > 0) {
+                localVideo.srcObject = stream;
+                localVideoContainer.classList.remove('hidden');
+            }
+            if (streamModeTitle) streamModeTitle.textContent = 'Transmitindo Tela + Áudio';
         }
-    };
+
+        localStream = stream;
+        isBroadcaster = true;
+
+        audioTracks[0].onended = () => {
+            log('Captura de tela/áudio encerrada pelo usuário.');
+            stopBroadcasting();
+        };
+
+        log('Transmissão iniciada! Notificando sala...');
+        showView('stream');
+        setupVisualizer(localStream, 'broadcaster-visualizer');
+
+        socket.emit('broadcaster-start', currentRoomId);
+
+    } catch (err) {
+        log(`Erro ao iniciar transmissão: ${err.message}`);
+        alert(`Erro ao transmitir: ${err.message}`);
+    }
+}
+
+if (startScreenBroadcastBtn) {
+    startScreenBroadcastBtn.onclick = () => startBroadcasting(true);
+}
+
+if (startBroadcastBtn) {
+    startBroadcastBtn.onclick = () => startBroadcasting(false);
 }
 
 if (stopBroadcastBtn) {
-    stopBroadcastBtn.onclick = () => {
-        stopBroadcasting();
-    };
+    stopBroadcastBtn.onclick = () => stopBroadcasting();
 }
 
 function stopBroadcasting() {
@@ -316,7 +348,8 @@ async function initiateBroadcasterCall(listenerId) {
     broadcasterPeers.set(listenerId, pc);
     broadcasterPendingIce.set(listenerId, []);
 
-    localStream.getAudioTracks().forEach(track => {
+    // Adiciona todas as faixas (vídeo e áudio) para transmissão
+    localStream.getTracks().forEach(track => {
         pc.addTrack(track, localStream);
     });
 
@@ -331,11 +364,11 @@ async function initiateBroadcasterCall(listenerId) {
     };
 
     pc.onconnectionstatechange = () => {
-        log(`Status WebRTC com ouvinte ${listenerId}: ${pc.connectionState}`);
+        log(`Status WebRTC com receptor ${listenerId}: ${pc.connectionState}`);
         updateBroadcasterListenersDisplay();
 
         if (pc.connectionState === 'failed') {
-            log(`Reconetando com ${listenerId}...`);
+            log(`Reconectando com ${listenerId}...`);
             setTimeout(() => {
                 if (broadcasterPeers.has(listenerId) && localStream) {
                     initiateBroadcasterCall(listenerId);
@@ -393,26 +426,26 @@ function prepareReceiverMode() {
     isBroadcaster = false;
     showView('receiver');
     receiverDot.className = 'dot gray';
-    receiverStatusText.textContent = 'Conectando ao áudio da sala...';
+    receiverStatusText.textContent = 'Conectando ao sinal da sala...';
 
     socket.emit('receiver-ready', { roomId: currentRoomId });
 }
 
 function unlockAudioPlayback() {
-    log('Desbloqueando áudio via toque do usuário...');
-    if (remoteAudio) {
+    log('Desbloqueando mídia via toque do usuário...');
+    
+    if (remoteVideo && remoteVideo.srcObject) {
+        remoteVideo.play().catch(e => log(`Video play info: ${e.message}`));
+    }
+
+    if (remoteAudio && remoteAudio.srcObject) {
         remoteAudio.muted = false;
         remoteAudio.volume = parseFloat(volumeSlider ? volumeSlider.value : 1.0);
-        remoteAudio.play().then(() => {
-            log('Áudio ativado com sucesso!');
-            audioUnlockContainer.classList.add('hidden');
-            playbackPanel.classList.remove('hidden');
-        }).catch((err) => {
-            log(`Aguardando stream de áudio...`);
-            audioUnlockContainer.classList.add('hidden');
-            playbackPanel.classList.remove('hidden');
-        });
+        remoteAudio.play().catch(e => log(`Audio play info: ${e.message}`));
     }
+
+    audioUnlockContainer.classList.add('hidden');
+    playbackPanel.classList.remove('hidden');
 
     socket.emit('receiver-ready', { roomId: currentRoomId });
 }
@@ -423,9 +456,23 @@ if (unlockAudioBtn) {
     };
 }
 
-if (volumeSlider && remoteAudio) {
+if (volumeSlider) {
     volumeSlider.oninput = () => {
-        remoteAudio.volume = parseFloat(volumeSlider.value);
+        const vol = parseFloat(volumeSlider.value);
+        if (remoteAudio) remoteAudio.volume = vol;
+        if (remoteVideo) remoteVideo.volume = vol;
+    };
+}
+
+if (fullscreenBtn && remoteVideo) {
+    fullscreenBtn.onclick = () => {
+        if (remoteVideo.requestFullscreen) {
+            remoteVideo.requestFullscreen();
+        } else if (remoteVideo.webkitRequestFullscreen) {
+            remoteVideo.webkitRequestFullscreen();
+        } else if (remoteVideo.msRequestFullscreen) {
+            remoteVideo.msRequestFullscreen();
+        }
     };
 }
 
@@ -485,7 +532,7 @@ socket.on('offer', async (data) => {
         if (receiverPc.connectionState === 'connected') {
             if (reconnectTimer) clearTimeout(reconnectTimer);
             receiverDot.className = 'dot green';
-            receiverStatusText.textContent = '🟢 Áudio Ao Vivo Conectado';
+            receiverStatusText.textContent = '🟢 Mídia Ao Vivo Conectada';
         } else if (receiverPc.connectionState === 'failed') {
             receiverDot.className = 'dot orange';
             receiverStatusText.textContent = 'Reconectando...';
@@ -498,32 +545,42 @@ socket.on('offer', async (data) => {
     };
 
     receiverPc.ontrack = (event) => {
-        log(`Áudio direto recebido! Reproduzindo instantaneamente (< 100ms)...`);
-        
+        log(`Faixa recebida (${event.track.kind}). Configurando reprodução...`);
         const stream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
-        
-        // Reprodução direta via elemento <audio> HTML5 sem atraso de buffer
-        remoteAudio.srcObject = stream;
-        remoteAudio.muted = false;
-        remoteAudio.volume = parseFloat(volumeSlider ? volumeSlider.value : 1.0);
 
-        // Visualizador visual em tempo real sem redirecionamento para o speaker
-        setupVisualizer(stream, 'receiver-visualizer');
-
-        const playPromise = remoteAudio.play();
-        if (playPromise !== undefined) {
-            playPromise.then(() => {
-                log('Som saindo instantaneamente no celular!');
+        if (event.track.kind === 'video') {
+            // Transmissão possui vídeo da tela
+            videoContainer.classList.remove('hidden');
+            remoteVideo.srcObject = stream;
+            remoteVideo.muted = false;
+            remoteVideo.volume = parseFloat(volumeSlider ? volumeSlider.value : 1.0);
+            remoteVideo.play().then(() => {
+                log('Vídeo da tela rodando no celular!');
+                audioUnlockContainer.classList.add('hidden');
+                playbackPanel.classList.remove('hidden');
                 receiverDot.className = 'dot green';
-                receiverStatusText.textContent = '🟢 Áudio Ao Vivo Conectado';
+                receiverStatusText.textContent = '🟢 Tela + Áudio Ao Vivo';
+            }).catch(e => {
+                log(`Autoplay do vídeo pendente do toque: ${e.message}`);
+                audioUnlockContainer.classList.remove('hidden');
+            });
+        }
+
+        if (event.track.kind === 'audio') {
+            remoteAudio.srcObject = stream;
+            remoteAudio.muted = false;
+            remoteAudio.volume = parseFloat(volumeSlider ? volumeSlider.value : 1.0);
+            
+            // Visualizador de áudio
+            setupVisualizer(stream, 'receiver-visualizer');
+
+            remoteAudio.play().then(() => {
+                log('Áudio rodando no celular!');
                 audioUnlockContainer.classList.add('hidden');
                 playbackPanel.classList.remove('hidden');
             }).catch(e => {
-                log(`Autoplay bloqueado pelo celular. Toque no botão verde: ${e.message}`);
-                receiverDot.className = 'dot orange';
-                receiverStatusText.textContent = 'Áudio pronto! Toque no botão verde abaixo:';
+                log(`Autoplay do áudio pendente do toque: ${e.message}`);
                 audioUnlockContainer.classList.remove('hidden');
-                playbackPanel.classList.add('hidden');
             });
         }
     };
@@ -594,7 +651,7 @@ socket.on('ice-candidate', async (data) => {
     }
 });
 
-// --- VISUALIZADOR DE ÁUDIO (Apenas análise visual sem delay de saída) ---
+// --- VISUALIZADOR DE ÁUDIO ---
 function setupVisualizer(stream, visualizerId) {
     const visualizerEl = document.getElementById(visualizerId);
     if (!visualizerEl) return;
@@ -611,7 +668,6 @@ function setupVisualizer(stream, visualizerId) {
         const analyser = audioContext.createAnalyser();
         analyser.fftSize = 32;
         source.connect(analyser);
-        // NOTA: Não conecta ao destination para evitar buffering/resampling de áudio!
 
         const bars = visualizerEl.querySelectorAll('.bar');
         const dataArray = new Uint8Array(analyser.frequencyBinCount);

@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BluePad Audio | Transmissão de Som PC para Celular</title>
+    <title>BluePad Audio & Screen | Transmissão de Som e Tela</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1 id="logo">Blue<span>Pad</span> Audio</h1>
+            <h1 id="logo">Blue<span>Pad</span> Stream</h1>
             <div id="room-display" class="room-badge hidden">
                 <span>Sala:</span> <strong id="room-id">...</strong>
             </div>
@@ -20,9 +20,9 @@
             <!-- 1. Home View: Escolha de Sala -->
             <div id="home-view" class="view">
                 <div class="card">
-                    <div class="card-icon">🎧</div>
-                    <h2>Transmitir Som do PC</h2>
-                    <p>Transmita o áudio do seu computador diretamente para o fone de ouvido do seu celular via Wi-Fi em tempo real.</p>
+                    <div class="card-icon">📺</div>
+                    <h2>Transmitir Som e Tela do PC</h2>
+                    <p>Transmita a tela e o áudio do seu computador diretamente para o seu celular via Wi-Fi ou Internet em tempo real.</p>
                     
                     <div class="input-group">
                         <span class="prefix">sala/</span>
@@ -44,7 +44,7 @@
 
                     <!-- Compartilhar com o celular -->
                     <div class="share-box" id="share-box">
-                        <span class="share-label">Abra no celular para ouvir:</span>
+                        <span class="share-label">Abra no celular para assistir/ouvir:</span>
                         <div class="share-url-container">
                             <span id="share-url" class="share-url">Carregando...</span>
                             <button id="copy-url-btn" class="btn-icon" title="Copiar link">📋</button>
@@ -52,19 +52,27 @@
                     </div>
 
                     <div class="action-grid">
-                        <button id="start-broadcast-btn" class="btn primary-action">
-                            <div class="action-icon">💻</div>
+                        <button id="start-screen-broadcast-btn" class="btn primary-action highlighted">
+                            <div class="action-icon">🖥️</div>
                             <div class="action-text">
-                                <strong>Transmitir Som do PC</strong>
-                                <small>Capturar áudio do Windows / Navegador</small>
+                                <strong>Transmitir Tela + Som</strong>
+                                <small>Vídeo em HD + Áudio do sistema</small>
+                            </div>
+                        </button>
+
+                        <button id="start-broadcast-btn" class="btn secondary-action">
+                            <div class="action-icon">🎧</div>
+                            <div class="action-text">
+                                <strong>Transmitir Apenas Som</strong>
+                                <small>Somente áudio (Modo economia)</small>
                             </div>
                         </button>
 
                         <button id="start-listen-btn" class="btn secondary-action">
                             <div class="action-icon">📱</div>
                             <div class="action-text">
-                                <strong>Ouvir neste Dispositivo</strong>
-                                <small>Escutar no celular ou fone</small>
+                                <strong>Receber neste Dispositivo</strong>
+                                <small>Assistir / Ouvir no celular</small>
                             </div>
                         </button>
                     </div>
@@ -78,12 +86,17 @@
                 <div class="card">
                     <div class="status-indicator">
                         <div class="dot pulse-red"></div>
-                        <span class="status-title">Transmitindo Áudio do PC</span>
+                        <span class="status-title" id="stream-mode-title">Transmitindo PC</span>
                     </div>
 
                     <div class="listeners-badge">
                         <span class="icon">👥</span>
                         <span id="listener-count-text">0 ouvintes conectados</span>
+                    </div>
+
+                    <!-- Preview Local da Tela Compartilhada (PC) -->
+                    <div id="local-video-container" class="local-video-container hidden">
+                        <video id="local-video" autoplay muted playsinline class="video-preview"></video>
                     </div>
 
                     <!-- Visualizador de volume do PC -->
@@ -97,28 +110,36 @@
                         <div class="bar"></div>
                     </div>
 
-                    <p class="streaming-note">O áudio do seu computador está sendo enviado para a sala em tempo real.</p>
+                    <p class="streaming-note">O conteúdo do seu computador está sendo enviado para a sala em tempo real.</p>
                     
                     <button id="stop-broadcast-btn" class="btn danger">Parar Transmissão</button>
                 </div>
             </div>
 
-            <!-- 4. Receiver View (Celular Ouvindo) -->
+            <!-- 4. Receiver View (Celular Assistindo/Ouvindo) -->
             <div id="receiver-view" class="view hidden">
                 <div class="card">
-                    <h2>Receptor de Áudio</h2>
+                    <h2>Receptor de Mídia</h2>
 
                     <div id="receiver-status" class="status-indicator">
                         <div class="dot gray" id="receiver-dot"></div>
-                        <span id="receiver-status-text">Aguardando áudio...</span>
+                        <span id="receiver-status-text">Aguardando transmissão...</span>
                     </div>
 
-                    <!-- Botão de Desbloqueio de Áudio (Mobile Autoplay) -->
+                    <!-- Botão de Desbloqueio Mídia (Mobile Autoplay) -->
                     <div id="audio-unlock-container" class="unlock-container">
                         <button id="unlock-audio-btn" class="btn pulse-btn">
-                            🔊 Toque para Ouvir o Áudio
+                            ▶️ Toque para Iniciar Transmissão
                         </button>
-                        <p class="unlock-hint">Toque para ativar a reprodução de som no celular.</p>
+                        <p class="unlock-hint">Toque para ativar o vídeo e o som no celular.</p>
+                    </div>
+
+                    <!-- Player de Vídeo da Tela Recebida (Celular) -->
+                    <div id="video-container" class="video-container hidden">
+                        <div class="video-wrapper">
+                            <video id="remote-video" autoplay playsinline webkit-playsinline></video>
+                            <button id="fullscreen-btn" class="btn-fullscreen" title="Tela Cheia">⛶ Tela Cheia</button>
+                        </div>
                     </div>
 
                     <!-- Painel de Reprodução Ativa -->
@@ -149,7 +170,7 @@
             </div>
         </main>
 
-        <!-- Elemento de áudio invisível para reproduzir stream WebRTC -->
+        <!-- Elemento de áudio invisível fallback -->
         <audio id="remote-audio" autoplay playsinline webkit-playsinline></audio>
 
         <!-- Seção de depuração (recolhível) -->
@@ -159,7 +180,7 @@
         </div>
 
         <footer>
-            <p>&copy; 2026 BluePad Audio &bull; P2P de Baixa Latência</p>
+            <p>&copy; 2026 BluePad Stream &bull; P2P de Baixa Latência</p>
         </footer>
     </div>
 
