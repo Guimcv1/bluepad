@@ -808,13 +808,15 @@ async function startVoiceScreenShare() {
         if (videoTrack) {
             videoTrack.onended = () => stopVoiceScreenShare();
 
-            // Adicionar a faixa de vídeo às conexões P2P ativas no canal de voz
-            voicePeers.forEach(({ pc }) => {
-                pc.addTrack(videoTrack, localVoiceScreenStream);
-                pc.createOffer().then(offer => {
-                    pc.setLocalDescription(offer);
-                    socket.emit('voice-signal-offer', { targetId: pc.peerId, sdp: offer });
-                }).catch(e => {});
+            // Substitui a faixa de vídeo instantaneamente nas conexões P2P ativas sem colisão de SDP
+            voicePeers.forEach(({ pc }, peerId) => {
+                const senders = pc.getSenders();
+                let videoSender = senders.find(s => (s.track && s.track.kind === 'video') || (s.searchKind === 'video'));
+                if (videoSender) {
+                    videoSender.replaceTrack(videoTrack);
+                } else {
+                    try { pc.addTrack(videoTrack, localVoiceScreenStream); } catch (e) {}
+                }
             });
         }
 
@@ -828,6 +830,18 @@ async function startVoiceScreenShare() {
 
 function stopVoiceScreenShare() {
     isVoiceScreenSharing = false;
+
+    // Reseta o sender de vídeo de todos os peers via replaceTrack(null) sem quebrar o P2P
+    voicePeers.forEach(({ pc }) => {
+        try {
+            const senders = pc.getSenders();
+            const videoSender = senders.find(s => (s.track && s.track.kind === 'video') || (s.searchKind === 'video'));
+            if (videoSender) {
+                videoSender.replaceTrack(null);
+            }
+        } catch (e) {}
+    });
+
     if (localVoiceScreenStream) {
         cleanupMediaStream(localVoiceScreenStream);
         localVoiceScreenStream = null;
@@ -875,9 +889,10 @@ function renderVoiceStreamsGrid() {
             const video = document.createElement('video');
             video.autoplay = true;
             video.playsInline = true;
-            video.muted = (streamId === 'local_screen');
+            video.muted = true;
             video.srcObject = item.stream;
             video.className = 'stream-tile-video';
+            if (item.stream) video.play().catch(e => {});
 
             const overlay = document.createElement('div');
             overlay.className = 'stream-tile-overlay';
@@ -940,7 +955,7 @@ function focusScreenStream(streamId) {
         focusedScreenshareVideo.srcObject = item.stream;
         if (focusedScreenshareTitle) focusedScreenshareTitle.textContent = `🖥️ Transmissão de Tela de ${item.username}`;
         focusedScreenshareContainer.classList.remove('hidden');
-        focusedScreenshareVideo.play().catch(e => log(`Video play error: ${e.message}`));
+        if (item.stream) focusedScreenshareVideo.play().catch(e => log(`Video play error: ${e.message}`));
     }
 
     renderVoiceStreamsGrid();
@@ -1073,7 +1088,10 @@ async function createVoicePeerConnection(peerId, isInitiator, peerUsername = 'Am
         localVoiceStream.getTracks().forEach(t => pc.addTrack(t, localVoiceStream));
     }
     if (isVoiceScreenSharing && localVoiceScreenStream) {
-        localVoiceScreenStream.getTracks().forEach(t => pc.addTrack(t, localVoiceScreenStream));
+        const vTrack = localVoiceScreenStream.getVideoTracks()[0];
+        if (vTrack) pc.addTrack(vTrack, localVoiceScreenStream);
+    } else {
+        try { pc.addTransceiver('video', { direction: 'sendrecv' }); } catch (e) {}
     }
 
     pc.onicecandidate = (event) => {
@@ -1086,7 +1104,17 @@ async function createVoicePeerConnection(peerId, isInitiator, peerUsername = 'Am
         log(`Mídia (${event.track.kind}) recebida do peer (${peerId})`);
 
         if (event.track.kind === 'video') {
-            const videoStream = new MediaStream([event.track]);
+            const videoStream = event.streams[0] || new MediaStream([event.track]);
+            
+            event.track.onunmute = () => {
+                log(`Primeiro frame de vídeo de ${peerId} desmutado (renderizando!)`);
+                renderVoiceStreamsGrid();
+                if (focusedScreenId === peerId && focusedScreenshareVideo) {
+                    focusedScreenshareVideo.srcObject = videoStream;
+                    focusedScreenshareVideo.play().catch(e => {});
+                }
+            };
+
             const existing = activeScreenStreams.get(peerId);
             activeScreenStreams.set(peerId, {
                 id: peerId,
@@ -1094,12 +1122,6 @@ async function createVoicePeerConnection(peerId, isInitiator, peerUsername = 'Am
                 username: (existing && existing.username) || peerUsername || 'Amigo',
                 stream: videoStream
             });
-
-            if (focusedScreenId === peerId && focusedScreenshareVideo) {
-                focusedScreenshareVideo.srcObject = videoStream;
-                focusedScreenshareVideo.muted = true;
-                focusedScreenshareVideo.play().catch(e => {});
-            }
 
             renderVoiceStreamsGrid();
         }
