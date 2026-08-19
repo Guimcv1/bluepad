@@ -577,13 +577,34 @@ socket.on('voice-user-state-changed', (data) => {
 
 socket.on('voice-screen-started', (data) => {
     log(`Transmissão de tela iniciada pelo usuário ${data.username} (${data.userId})`);
-    if (!activeScreenStreams.has(data.userId) && data.userId !== socket.id) {
+    if (data.userId !== socket.id) {
+        let streamToUse = null;
+
+        // Se a conexão WebRTC já possui o receiver de vídeo, recupera o MediaStream imediatamente
+        if (voicePeers.has(data.userId)) {
+            const { pc } = voicePeers.get(data.userId);
+            const receivers = pc.getReceivers();
+            const vReceiver = receivers.find(r => r.track && r.track.kind === 'video');
+            if (vReceiver && vReceiver.track) {
+                streamToUse = new MediaStream([vReceiver.track]);
+                vReceiver.track.onunmute = () => {
+                    log(`Track de vídeo de ${data.userId} desmutada no cliente receptor!`);
+                    renderVoiceStreamsGrid();
+                    if (focusedScreenId === data.userId && focusedScreenshareVideo) {
+                        focusedScreenshareVideo.srcObject = streamToUse;
+                        focusedScreenshareVideo.play().catch(e => {});
+                    }
+                };
+            }
+        }
+
         activeScreenStreams.set(data.userId, {
             id: data.userId,
             userId: data.userId,
             username: data.username,
-            stream: null
+            stream: streamToUse
         });
+
         renderVoiceStreamsGrid();
     }
 });
@@ -947,8 +968,17 @@ function focusScreenStream(streamId) {
     const item = activeScreenStreams.get(streamId);
     focusedScreenId = streamId;
 
+    // Se o stream for nulo, busca o vídeo diretamente do receiver WebRTC do peer
+    if (!item.stream && voicePeers.has(streamId)) {
+        const { pc } = voicePeers.get(streamId);
+        const receivers = pc.getReceivers();
+        const vReceiver = receivers.find(r => r.track && r.track.kind === 'video');
+        if (vReceiver && vReceiver.track) {
+            item.stream = new MediaStream([vReceiver.track]);
+        }
+    }
+
     if (focusedScreenshareContainer && focusedScreenshareVideo) {
-        // Conecta o stream ao container expandido em destaque (muted = true garante que o navegador reproduza sem tela preta)
         focusedScreenshareVideo.autoplay = true;
         focusedScreenshareVideo.playsInline = true;
         focusedScreenshareVideo.muted = true;
@@ -1106,24 +1136,22 @@ async function createVoicePeerConnection(peerId, isInitiator, peerUsername = 'Am
         if (event.track.kind === 'video') {
             const videoStream = event.streams[0] || new MediaStream([event.track]);
             
-            event.track.onunmute = () => {
-                log(`Primeiro frame de vídeo de ${peerId} desmutado (renderizando!)`);
+            // APENAS processa o vídeo se este participante REALMENTE iniciou uma transmissão de tela
+            if (activeScreenStreams.has(peerId)) {
+                const existing = activeScreenStreams.get(peerId);
+                existing.stream = videoStream;
+
+                event.track.onunmute = () => {
+                    log(`Primeiro frame de vídeo de ${peerId} desmutado (renderizando!)`);
+                    renderVoiceStreamsGrid();
+                    if (focusedScreenId === peerId && focusedScreenshareVideo) {
+                        focusedScreenshareVideo.srcObject = videoStream;
+                        focusedScreenshareVideo.play().catch(e => {});
+                    }
+                };
+
                 renderVoiceStreamsGrid();
-                if (focusedScreenId === peerId && focusedScreenshareVideo) {
-                    focusedScreenshareVideo.srcObject = videoStream;
-                    focusedScreenshareVideo.play().catch(e => {});
-                }
-            };
-
-            const existing = activeScreenStreams.get(peerId);
-            activeScreenStreams.set(peerId, {
-                id: peerId,
-                userId: peerId,
-                username: (existing && existing.username) || peerUsername || 'Amigo',
-                stream: videoStream
-            });
-
-            renderVoiceStreamsGrid();
+            }
         }
         if (event.track.kind === 'audio') {
             const audioStream = event.streams[0] || new MediaStream([event.track]);
