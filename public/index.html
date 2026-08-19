@@ -1,75 +1,165 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OnlineBluetooth | Minimalist Audio Stream</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BluePad Audio | Transmissão de Som PC para Celular</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1 id="logo">Online<span>Bluetooth</span></h1>
-            <p id="room-display">Room: <span id="room-id">...</span></p>
+            <h1 id="logo">Blue<span>Pad</span> Audio</h1>
+            <div id="room-display" class="room-badge hidden">
+                <span>Sala:</span> <strong id="room-id">...</strong>
+            </div>
         </header>
 
         <main>
+            <!-- 1. Home View: Escolha de Sala -->
             <div id="home-view" class="view">
                 <div class="card">
-                    <h2>Choose your Room</h2>
-                    <p>Enter a keyword to create or join a room.</p>
+                    <div class="card-icon">🎧</div>
+                    <h2>Transmitir Som do PC</h2>
+                    <p>Transmita o áudio do seu computador diretamente para o fone de ouvido do seu celular via Wi-Fi em tempo real.</p>
+                    
                     <div class="input-group">
-                        <span class="prefix">onlinebluetooth.com/</span>
-                        <input type="text" id="room-input" placeholder="keyword" autocomplete="off">
+                        <span class="prefix">sala/</span>
+                        <input type="text" id="room-input" placeholder="ex: minhasala" autocomplete="off" autofocus>
                     </div>
-                    <button id="go-room" class="btn primary">Join Room</button>
+                    
+                    <button id="go-room" class="btn primary">Entrar na Sala</button>
                 </div>
             </div>
 
+            <!-- 2. Hub / Seleção de Modo (Ao entrar na sala) -->
             <div id="setup-view" class="view hidden">
                 <div class="card">
-                    <h2>Capture & Stream</h2>
-                    <p>Share your PC audio and listen on your phone.</p>
-                    <button id="start-broadcast" class="btn primary">Start Broadcasting</button>
-                    <p class="hint">Make sure to check "Share Audio" in the popup.</p>
+                    <!-- Status do transmissor na sala -->
+                    <div id="room-broadcaster-status" class="status-pill idle">
+                        <span class="status-dot"></span>
+                        <span id="room-status-text">Verificando transmissão...</span>
+                    </div>
+
+                    <!-- Compartilhar com o celular -->
+                    <div class="share-box" id="share-box">
+                        <span class="share-label">Abra no celular para ouvir:</span>
+                        <div class="share-url-container">
+                            <span id="share-url" class="share-url">Carregando...</span>
+                            <button id="copy-url-btn" class="btn-icon" title="Copiar link">📋</button>
+                        </div>
+                    </div>
+
+                    <div class="action-grid">
+                        <button id="start-broadcast-btn" class="btn primary-action">
+                            <div class="action-icon">💻</div>
+                            <div class="action-text">
+                                <strong>Transmitir Som do PC</strong>
+                                <small>Capturar áudio do Windows / Navegador</small>
+                            </div>
+                        </button>
+
+                        <button id="start-listen-btn" class="btn secondary-action">
+                            <div class="action-icon">📱</div>
+                            <div class="action-text">
+                                <strong>Ouvir neste Dispositivo</strong>
+                                <small>Escutar no celular ou fone</small>
+                            </div>
+                        </button>
+                    </div>
+
+                    <p class="hint">⚠️ Ao transmitir no PC, marque <strong>"Compartilhar áudio"</strong> na janela que abrir.</p>
                 </div>
             </div>
 
+            <!-- 3. Broadcaster View (PC Transmitindo) -->
             <div id="stream-view" class="view hidden">
                 <div class="card">
                     <div class="status-indicator">
-                        <div class="dot pulse"></div>
-                        <span>Live Transmission</span>
+                        <div class="dot pulse-red"></div>
+                        <span class="status-title">Transmitindo Áudio do PC</span>
                     </div>
-                    <div id="visualizer">
+
+                    <div class="listeners-badge">
+                        <span class="icon">👥</span>
+                        <span id="listener-count-text">0 ouvintes conectados</span>
+                    </div>
+
+                    <!-- Visualizador de volume do PC -->
+                    <div id="broadcaster-visualizer" class="visualizer">
+                        <div class="bar"></div>
+                        <div class="bar"></div>
                         <div class="bar"></div>
                         <div class="bar"></div>
                         <div class="bar"></div>
                         <div class="bar"></div>
                         <div class="bar"></div>
                     </div>
-                    <button id="stop-broadcast" class="btn secondary">Stop</button>
+
+                    <p class="streaming-note">O áudio do seu computador está sendo enviado para a sala em tempo real.</p>
+                    
+                    <button id="stop-broadcast-btn" class="btn danger">Parar Transmissão</button>
                 </div>
             </div>
 
+            <!-- 4. Receiver View (Celular Ouvindo) -->
             <div id="receiver-view" class="view hidden">
                 <div class="card">
-                    <h2>Listening Mode</h2>
-                    <p id="receiver-hint">Waiting for audio stream...</p>
-                    <div id="audio-status" class="status-indicator">
-                        <div class="dot gray"></div>
-                        <span>Idle</span>
+                    <h2>Receptor de Áudio</h2>
+
+                    <div id="receiver-status" class="status-indicator">
+                        <div class="dot gray" id="receiver-dot"></div>
+                        <span id="receiver-status-text">Aguardando áudio...</span>
                     </div>
-                    <div id="debug-log" style="font-size: 0.7rem; color: #aaa; margin-top: 1rem; text-align: left; max-height: 100px; overflow-y: auto;"></div>
-                    <audio id="remote-audio" autoplay playsinline></audio>
-                    <button id="manual-play" class="btn primary hidden" style="margin-top: 1rem;">Tap to Hear Audio</button>
+
+                    <!-- Botão de Desbloqueio de Áudio (Mobile Autoplay) -->
+                    <div id="audio-unlock-container" class="unlock-container">
+                        <button id="unlock-audio-btn" class="btn pulse-btn">
+                            🔊 Toque para Ouvir o Áudio
+                        </button>
+                        <p class="unlock-hint">Toque para ativar a reprodução de som no celular.</p>
+                    </div>
+
+                    <!-- Painel de Reprodução Ativa -->
+                    <div id="playback-panel" class="playback-panel hidden">
+                        <div id="receiver-visualizer" class="visualizer active">
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                        </div>
+
+                        <!-- Controle de Volume -->
+                        <div class="volume-control">
+                            <span class="vol-icon">🔈</span>
+                            <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1">
+                            <span class="vol-icon">🔊</span>
+                        </div>
+                    </div>
+
+                    <div class="receiver-actions">
+                        <button id="reconnect-btn" class="btn secondary small">Reconectar</button>
+                        <button id="leave-room-btn" class="btn outline small">Trocar de Sala</button>
+                    </div>
                 </div>
             </div>
         </main>
 
+        <!-- Elemento de áudio invisível para reproduzir stream WebRTC -->
+        <audio id="remote-audio" autoplay playsinline webkit-playsinline></audio>
+
+        <!-- Seção de depuração (recolhível) -->
+        <div class="debug-section">
+            <button id="toggle-debug-btn" class="debug-toggle">Log de Diagnóstico</button>
+            <div id="debug-log" class="debug-log hidden"></div>
+        </div>
+
         <footer>
-            <p>&copy; 2026 OnlineBluetooth. Low Latency P2P.</p>
+            <p>&copy; 2026 BluePad Audio &bull; P2P de Baixa Latência</p>
         </footer>
     </div>
 

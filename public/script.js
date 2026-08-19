@@ -1,259 +1,634 @@
+// BluePad Audio - Script Principal
 const socket = io();
-const pathParts = window.location.pathname.split('/').filter(p => p !== "");
-const roomId = pathParts[0] || null;
 
+// Elementos do DOM
 const homeView = document.getElementById('home-view');
 const setupView = document.getElementById('setup-view');
-const roomInput = document.getElementById('room-input');
-const goRoomBtn = document.getElementById('go-room');
-const roomDisplay = document.getElementById('room-id');
-
-if (roomId) {
-    document.getElementById('room-display').classList.remove('hidden');
-    roomDisplay.innerText = roomId;
-    homeView.classList.add('hidden');
-    setupView.classList.remove('hidden');
-    socket.emit('join-room', roomId);
-} else {
-    document.getElementById('room-display').classList.add('hidden');
-}
-
-goRoomBtn.onclick = () => {
-    const keyword = roomInput.value.trim().toLowerCase();
-    if (keyword) window.location.href = `/${keyword}`;
-};
-
-roomInput.onkeypress = (e) => {
-    if (e.key === 'Enter') goRoomBtn.click();
-};
-
-// --- GLOBAL ERROR CATCHING ---
-const debugLog = document.getElementById('debug-log');
-function log(msg) {
-    console.log(msg);
-    const entry = document.createElement('div');
-    entry.innerText = `> ${new Date().toLocaleTimeString()}: ${msg}`;
-    if (debugLog) debugLog.prepend(entry);
-}
-
-window.onerror = (msg, url, line) => {
-    log(`JS ERROR: ${msg} at ${line}`);
-};
-
-const startBtn = document.getElementById('start-broadcast');
-const stopBtn = document.getElementById('stop-broadcast');
 const streamView = document.getElementById('stream-view');
 const receiverView = document.getElementById('receiver-view');
-const remoteAudio = document.getElementById('remote-audio');
-const audioStatus = document.getElementById('audio-status');
-const manualPlayBtn = document.getElementById('manual-play');
 
-let localStream;
-let peerConnection;
-const config = {
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+const roomInput = document.getElementById('room-input');
+const goRoomBtn = document.getElementById('go-room');
+const roomDisplay = document.getElementById('room-display');
+const roomIdEl = document.getElementById('room-id');
+
+const roomStatusPill = document.getElementById('room-broadcaster-status');
+const roomStatusText = document.getElementById('room-status-text');
+const shareUrlEl = document.getElementById('share-url');
+const copyUrlBtn = document.getElementById('copy-url-btn');
+
+const startBroadcastBtn = document.getElementById('start-broadcast-btn');
+const startListenBtn = document.getElementById('start-listen-btn');
+const stopBroadcastBtn = document.getElementById('stop-broadcast-btn');
+const listenerCountText = document.getElementById('listener-count-text');
+
+const receiverDot = document.getElementById('receiver-dot');
+const receiverStatusText = document.getElementById('receiver-status-text');
+const audioUnlockContainer = document.getElementById('audio-unlock-container');
+const unlockAudioBtn = document.getElementById('unlock-audio-btn');
+const playbackPanel = document.getElementById('playback-panel');
+const volumeSlider = document.getElementById('volume-slider');
+const reconnectBtn = document.getElementById('reconnect-btn');
+const leaveRoomBtn = document.getElementById('leave-room-btn');
+
+const remoteAudio = document.getElementById('remote-audio');
+const toggleDebugBtn = document.getElementById('toggle-debug-btn');
+const debugLog = document.getElementById('debug-log');
+
+// Configuração WebRTC Ultrarrápida (< 100ms de latência e conexão instantânea)
+let rtcConfig = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+    ],
+    iceCandidatePoolSize: 0
 };
 
-function cleanupConnection() {
-    if (peerConnection) {
-        log("Cleaning up old connection...");
-        peerConnection.onicecandidate = null;
-        peerConnection.ontrack = null;
-        peerConnection.onconnectionstatechange = null;
-        peerConnection.close();
-        peerConnection = null;
+// Variáveis de Estado
+let currentRoomId = null;
+let isBroadcaster = false;
+let localStream = null;
+let audioContext = null;
+
+// Broadcaster: mapa de ouvintes (listenerId -> RTCPeerConnection)
+const broadcasterPeers = new Map();
+const broadcasterPendingIce = new Map();
+
+// Receiver: conexão e fila de ICE
+let receiverPc = null;
+let receiverIceQueue = [];
+let reconnectTimer = null;
+
+// Sistema de Diagnóstico / Logs
+function log(msg) {
+    console.log(`[BluePad] ${msg}`);
+    if (debugLog) {
+        const line = document.createElement('div');
+        line.textContent = `${new Date().toLocaleTimeString()} - ${msg}`;
+        debugLog.prepend(line);
     }
 }
 
-// --- SIGNALING LISTENERS ---
+if (toggleDebugBtn && debugLog) {
+    toggleDebugBtn.onclick = () => {
+        debugLog.classList.toggle('hidden');
+    };
+}
 
-socket.on('user-connected', (userId) => {
-    if (localStream) {
-        log(`New user joined: ${userId}. Starting call...`);
-        initiateCall(userId);
-    }
+window.addEventListener('error', (e) => {
+    log(`Erro JS: ${e.message}`);
 });
 
-socket.on('receiver-ready', (userId) => {
-    if (localStream) {
-        log(`Receiver ${userId} ready. Starting call...`);
-        initiateCall(userId);
-    }
-});
+// --- ROTEAMENTO E INICIALIZAÇÃO DA SALA ---
+const pathSegments = window.location.pathname.split('/').filter(p => p.trim() !== '');
+currentRoomId = pathSegments[0] ? decodeURIComponent(pathSegments[0]).toLowerCase() : null;
 
-socket.on('broadcaster-ready', (broadcasterId) => {
-    if (!localStream) {
-        log(`Broadcaster detected: ${broadcasterId}. Sending readiness...`);
-        socket.emit('receiver-ready', { roomId, targetId: broadcasterId });
-    }
-});
+if (currentRoomId) {
+    initRoom(currentRoomId);
+} else {
+    showView('home');
+}
 
-socket.on('offer', async (data) => {
-    log(`Offer received from ${data.senderId}`);
-    if (!localStream) {
-        setupView.classList.add('hidden');
-        receiverView.classList.remove('hidden');
-    }
+function initRoom(roomId) {
+    currentRoomId = roomId;
+    roomIdEl.textContent = roomId;
+    roomDisplay.classList.remove('hidden');
+    showView('setup');
 
-    cleanupConnection();
-    peerConnection = createPeerConnection(data.senderId);
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-
-    socket.emit('answer', { roomId, sdp: answer });
-});
-
-socket.on('answer', async (data) => {
-    log(`Answer received from ${data.senderId}`);
-    if (peerConnection) {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-    }
-});
-
-socket.on('user-disconnected', (userId) => {
-    log(`User ${userId} disconnected.`);
-    cleanupConnection();
-    if (!localStream) {
-        // If we are the receiver, go back to idle
-        const dot = audioStatus.querySelector('.dot');
-        const text = audioStatus.querySelector('span');
-        if (dot) dot.className = 'dot gray';
-        if (text) text.innerText = 'Idle';
-    }
-});
-
-socket.on('ice-candidate', async (data) => {
-    if (peerConnection) {
-        try {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (e) {
-            console.error("Error adding ice candidate", e);
-        }
-    }
-});
-
-// --- TRANSMITTER LOGIC ---
-
-if (startBtn) {
-    startBtn.onclick = async () => {
-        log("Button clicked. Checking mediaDevices...");
-        try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-                throw new Error("getDisplayMedia not supported (Use HTTPS)");
+    fetch('/api/info')
+        .then(res => res.json())
+        .then(data => {
+            if (data.iceServers && data.iceServers.length > 0) {
+                rtcConfig.iceServers = data.iceServers;
+                log(`STUN carregado: ${data.iceServers.length} servidores configurados.`);
             }
 
-            log("Requesting stream (Select Screen + Share Audio)...");
-            localStream = await navigator.mediaDevices.getDisplayMedia({
+            if (window.location.hostname !== 'localhost' && !window.location.hostname.startsWith('192.168.')) {
+                shareUrlEl.textContent = window.location.href;
+                shareUrlEl.setAttribute('data-url', window.location.href);
+            } else {
+                const host = data.localIp || window.location.hostname;
+                const port = data.port || window.location.port;
+                const shareUrl = `${window.location.protocol}//${host}${port ? `:${port}` : ''}/${roomId}`;
+                shareUrlEl.textContent = shareUrl;
+                shareUrlEl.setAttribute('data-url', shareUrl);
+            }
+        })
+        .catch(() => {
+            shareUrlEl.textContent = window.location.href;
+            shareUrlEl.setAttribute('data-url', window.location.href);
+        });
+
+    log(`Entrando na sala: ${roomId}`);
+    socket.emit('join-room', roomId);
+}
+
+if (goRoomBtn && roomInput) {
+    const handleJoin = () => {
+        const keyword = roomInput.value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+        if (keyword) {
+            window.location.href = `/${keyword}`;
+        }
+    };
+    goRoomBtn.onclick = handleJoin;
+    roomInput.onkeypress = (e) => {
+        if (e.key === 'Enter') handleJoin();
+    };
+}
+
+if (copyUrlBtn) {
+    copyUrlBtn.onclick = () => {
+        const url = shareUrlEl.getAttribute('data-url') || shareUrlEl.textContent;
+        navigator.clipboard.writeText(url).then(() => {
+            copyUrlBtn.textContent = '✅';
+            setTimeout(() => { copyUrlBtn.textContent = '📋'; }, 2000);
+        }).catch(() => {
+            prompt('Copie o link abaixo:', url);
+        });
+    };
+}
+
+if (leaveRoomBtn) {
+    leaveRoomBtn.onclick = () => {
+        window.location.href = '/';
+    };
+}
+
+function showView(name) {
+    homeView.classList.add('hidden');
+    setupView.classList.add('hidden');
+    streamView.classList.add('hidden');
+    receiverView.classList.add('hidden');
+
+    if (name === 'home') homeView.classList.remove('hidden');
+    else if (name === 'setup') setupView.classList.remove('hidden');
+    else if (name === 'stream') streamView.classList.remove('hidden');
+    else if (name === 'receiver') receiverView.classList.remove('hidden');
+}
+
+// --- SOCKET.IO & EVENTOS DO SERVIDOR ---
+
+socket.on('room-status', (data) => {
+    log(`Status da sala: Broadcaster=${data.hasBroadcaster ? 'Ativo' : 'Inativo'}, Ouvintes=${data.listenerCount}`);
+    updateBroadcasterStatusIndicator(data.hasBroadcaster);
+});
+
+socket.on('broadcaster-started', (data) => {
+    log(`Transmissor iniciou na sala (${data.broadcasterId})`);
+    updateBroadcasterStatusIndicator(true);
+    
+    if (!isBroadcaster && !receiverView.classList.contains('hidden')) {
+        receiverStatusText.textContent = 'Transmissão iniciada! Conectando...';
+        socket.emit('receiver-ready', { roomId: currentRoomId, broadcasterId: data.broadcasterId });
+    }
+});
+
+socket.on('broadcaster-stopped', () => {
+    log('Transmissor parou ou desconectou');
+    updateBroadcasterStatusIndicator(false);
+    
+    if (!isBroadcaster) {
+        receiverDot.className = 'dot gray';
+        receiverStatusText.textContent = 'Transmissão encerrada pelo PC.';
+        playbackPanel.classList.add('hidden');
+        if (remoteAudio) remoteAudio.pause();
+    }
+});
+
+socket.on('listener-joined', (data) => {
+    if (isBroadcaster && localStream) {
+        log(`Novo ouvinte entrou (${data.listenerId}). Conectando instantaneamente...`);
+        initiateBroadcasterCall(data.listenerId);
+    }
+});
+
+socket.on('listener-ready', (data) => {
+    if (isBroadcaster && localStream) {
+        log(`Ouvinte (${data.listenerId}) pronto para áudio. Criando oferta SDP...`);
+        initiateBroadcasterCall(data.listenerId);
+    }
+});
+
+socket.on('listener-left', (data) => {
+    if (isBroadcaster) {
+        log(`Ouvinte saiu (${data.listenerId}). Ouvintes restantes: ${data.listenerCount}`);
+        cleanupBroadcasterPeer(data.listenerId);
+        updateListenerCount(data.listenerCount);
+    }
+});
+
+function updateBroadcasterStatusIndicator(isLive) {
+    if (!roomStatusPill || !roomStatusText) return;
+    if (isLive) {
+        roomStatusPill.className = 'status-pill live';
+        roomStatusText.textContent = 'PC transmitindo áudio ao vivo!';
+    } else {
+        roomStatusPill.className = 'status-pill idle';
+        roomStatusText.textContent = 'Nenhum PC transmitindo no momento';
+    }
+}
+
+function updateListenerCount(count) {
+    if (listenerCountText) {
+        listenerCountText.textContent = `${count} ${count === 1 ? 'ouvinte conectado' : 'ouvintes conectados'}`;
+    }
+}
+
+// --- LÓGICA DO TRANSMISSOR (PC) ---
+
+if (startBroadcastBtn) {
+    startBroadcastBtn.onclick = async () => {
+        log('Iniciando captura de áudio no PC...');
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                throw new Error('Navegador não suporta captura sem HTTPS. Em hospedagem pública acesse via https://');
+            }
+
+            const stream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
                 audio: true
             });
 
-            const audioTracks = localStream.getAudioTracks();
+            const audioTracks = stream.getAudioTracks();
             if (audioTracks.length === 0) {
-                localStream.getTracks().forEach(t => t.stop());
-                throw new Error("No audio track selected in the popup.");
+                stream.getTracks().forEach(t => t.stop());
+                throw new Error('Atenção: Marque a opção "Compartilhar áudio" na janela do navegador!');
             }
 
-            log("Success! Audio captured.");
-            const videoTrack = localStream.getVideoTracks()[0];
-            if (videoTrack) videoTrack.stop();
+            log(`Faixa de áudio ativada: ${audioTracks[0].label}`);
 
-            setupView.classList.add('hidden');
-            streamView.classList.remove('hidden');
+            // Desativa/remove a faixa de vídeo
+            const videoTracks = stream.getVideoTracks();
+            videoTracks.forEach(v => {
+                v.stop();
+                stream.removeTrack(v);
+            });
 
-            socket.emit('broadcaster-ready', roomId);
-            startVisualizer(localStream);
+            localStream = stream;
+            isBroadcaster = true;
+
+            audioTracks[0].onended = () => {
+                log('Captura de áudio encerrada pelo usuário.');
+                stopBroadcasting();
+            };
+
+            log('Áudio capturado! Notificando sala...');
+            showView('stream');
+            setupVisualizer(localStream, 'broadcaster-visualizer');
+
+            socket.emit('broadcaster-start', currentRoomId);
 
         } catch (err) {
-            log(`CRITICAL ERROR: ${err.message}`);
-            alert(`Error: ${err.message}`);
+            log(`Erro ao iniciar transmissão: ${err.message}`);
+            alert(`Erro ao transmitir: ${err.message}`);
         }
     };
 }
 
-async function initiateCall(targetId) {
-    cleanupConnection();
-    peerConnection = createPeerConnection(targetId);
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-
-    socket.emit('offer', { roomId, sdp: offer });
+if (stopBroadcastBtn) {
+    stopBroadcastBtn.onclick = () => {
+        stopBroadcasting();
+    };
 }
 
-function createPeerConnection(targetId) {
-    const pc = new RTCPeerConnection(config);
-    log(`PC created for ${targetId}`);
+function stopBroadcasting() {
+    isBroadcaster = false;
+    if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+        localStream = null;
+    }
+    broadcasterPeers.forEach((pc) => {
+        pc.close();
+    });
+    broadcasterPeers.clear();
+    broadcasterPendingIce.clear();
+
+    socket.emit('broadcaster-stop', currentRoomId);
+    showView('setup');
+    updateBroadcasterStatusIndicator(false);
+}
+
+async function initiateBroadcasterCall(listenerId) {
+    if (!localStream) return;
+    cleanupBroadcasterPeer(listenerId);
+
+    const pc = new RTCPeerConnection(rtcConfig);
+    broadcasterPeers.set(listenerId, pc);
+    broadcasterPendingIce.set(listenerId, []);
+
+    localStream.getAudioTracks().forEach(track => {
+        pc.addTrack(track, localStream);
+    });
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
-            socket.emit('ice-candidate', { roomId, candidate: event.candidate });
+            socket.emit('ice-candidate', {
+                targetId: listenerId,
+                roomId: currentRoomId,
+                candidate: event.candidate
+            });
         }
     };
 
     pc.onconnectionstatechange = () => {
-        log(`State: ${pc.connectionState}`);
-        if (pc.connectionState === 'connected') {
-            const dot = audioStatus.querySelector('.dot');
-            if (dot) dot.className = 'dot green';
+        log(`Status WebRTC com ouvinte ${listenerId}: ${pc.connectionState}`);
+        updateBroadcasterListenersDisplay();
+
+        if (pc.connectionState === 'failed') {
+            log(`Reconetando com ${listenerId}...`);
+            setTimeout(() => {
+                if (broadcasterPeers.has(listenerId) && localStream) {
+                    initiateBroadcasterCall(listenerId);
+                }
+            }, 1000);
         }
     };
 
-    pc.ontrack = (event) => {
-        log(`Track received: ${event.track.kind}`);
-        
-        // Robust way to attach the stream
-        if (event.streams && event.streams[0]) {
-            remoteAudio.srcObject = event.streams[0];
-        } else {
-            // Fallback for browsers that don't provide the stream in the event
-            if (!remoteAudio.srcObject) {
-                remoteAudio.srcObject = new MediaStream();
-            }
-            remoteAudio.srcObject.addTrack(event.track);
-        }
-        
-        remoteAudio.play().then(() => {
-            log("Playing audio stream...");
-            const text = audioStatus.querySelector('span');
-            if (text) text.innerText = 'Streaming Active';
-        }).catch(e => {
-            log("Autoplay blocked. Tap the button below.");
-            manualPlayBtn.classList.remove('hidden');
-            manualPlayBtn.onclick = () => {
-                remoteAudio.play();
-                manualPlayBtn.classList.add('hidden');
-                log("Audio started by user gesture.");
-            };
+    try {
+        const offer = await pc.createOffer({
+            offerToReceiveAudio: false,
+            offerToReceiveVideo: false
         });
-    };
+        await pc.setLocalDescription(offer);
 
-    return pc;
+        socket.emit('offer', {
+            targetId: listenerId,
+            roomId: currentRoomId,
+            sdp: offer
+        });
+    } catch (e) {
+        log(`Erro criando oferta para ${listenerId}: ${e.message}`);
+    }
 }
 
-function startVisualizer(stream) {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioContext.createMediaStreamSource(stream);
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 32;
-    source.connect(analyser);
+function cleanupBroadcasterPeer(listenerId) {
+    if (broadcasterPeers.has(listenerId)) {
+        const pc = broadcasterPeers.get(listenerId);
+        pc.ontrack = null;
+        pc.onicecandidate = null;
+        pc.onconnectionstatechange = null;
+        pc.close();
+        broadcasterPeers.delete(listenerId);
+    }
+    broadcasterPendingIce.delete(listenerId);
+}
 
-    const bars = document.querySelectorAll('.bar');
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+function updateBroadcasterListenersDisplay() {
+    let connectedCount = 0;
+    broadcasterPeers.forEach((pc) => {
+        if (pc.connectionState === 'connected') connectedCount++;
+    });
+    updateListenerCount(connectedCount || broadcasterPeers.size);
+}
 
-    function draw() {
-        if (!localStream) return;
-        requestAnimationFrame(draw);
-        analyser.getByteFrequencyData(dataArray);
-        bars.forEach((bar, i) => {
-            const h = Math.max(10, (dataArray[i] / 255) * 60);
-            bar.style.height = `${h}px`;
+// --- LÓGICA DO RECEPTOR (CELULAR) ---
+
+if (startListenBtn) {
+    startListenBtn.onclick = () => {
+        prepareReceiverMode();
+    };
+}
+
+function prepareReceiverMode() {
+    isBroadcaster = false;
+    showView('receiver');
+    receiverDot.className = 'dot gray';
+    receiverStatusText.textContent = 'Conectando ao áudio da sala...';
+
+    socket.emit('receiver-ready', { roomId: currentRoomId });
+}
+
+function unlockAudioPlayback() {
+    log('Desbloqueando áudio via toque do usuário...');
+    if (remoteAudio) {
+        remoteAudio.muted = false;
+        remoteAudio.volume = parseFloat(volumeSlider ? volumeSlider.value : 1.0);
+        remoteAudio.play().then(() => {
+            log('Áudio ativado com sucesso!');
+            audioUnlockContainer.classList.add('hidden');
+            playbackPanel.classList.remove('hidden');
+        }).catch((err) => {
+            log(`Aguardando stream de áudio...`);
+            audioUnlockContainer.classList.add('hidden');
+            playbackPanel.classList.remove('hidden');
         });
     }
-    draw();
+
+    socket.emit('receiver-ready', { roomId: currentRoomId });
 }
 
-if (stopBtn) stopBtn.onclick = () => location.reload();
+if (unlockAudioBtn) {
+    unlockAudioBtn.onclick = () => {
+        unlockAudioPlayback();
+    };
+}
+
+if (volumeSlider && remoteAudio) {
+    volumeSlider.oninput = () => {
+        remoteAudio.volume = parseFloat(volumeSlider.value);
+    };
+}
+
+if (reconnectBtn) {
+    reconnectBtn.onclick = () => {
+        triggerAutoReconnect();
+    };
+}
+
+function triggerAutoReconnect() {
+    log('Reconectando receptor WebRTC...');
+    cleanupReceiverConnection();
+    receiverDot.className = 'dot orange';
+    receiverStatusText.textContent = 'Reconectando ao PC...';
+    socket.emit('receiver-ready', { roomId: currentRoomId });
+}
+
+function cleanupReceiverConnection() {
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+    if (receiverPc) {
+        receiverPc.ontrack = null;
+        receiverPc.onicecandidate = null;
+        receiverPc.onconnectionstatechange = null;
+        receiverPc.close();
+        receiverPc = null;
+    }
+    receiverIceQueue = [];
+}
+
+// --- TRATAMENTO DE SINAIS WEBRTC (OFFER, ANSWER, ICE) ---
+
+socket.on('offer', async (data) => {
+    log(`Oferta WebRTC recebida do PC (${data.senderId})`);
+    
+    if (!isBroadcaster && setupView.classList.contains('hidden') === false) {
+        showView('receiver');
+    }
+
+    cleanupReceiverConnection();
+    receiverPc = new RTCPeerConnection(rtcConfig);
+
+    receiverPc.onicecandidate = (event) => {
+        if (event.candidate) {
+            socket.emit('ice-candidate', {
+                targetId: data.senderId,
+                roomId: currentRoomId,
+                candidate: event.candidate
+            });
+        }
+    };
+
+    receiverPc.onconnectionstatechange = () => {
+        log(`Estado WebRTC no celular: ${receiverPc.connectionState}`);
+        if (receiverPc.connectionState === 'connected') {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            receiverDot.className = 'dot green';
+            receiverStatusText.textContent = '🟢 Áudio Ao Vivo Conectado';
+        } else if (receiverPc.connectionState === 'failed') {
+            receiverDot.className = 'dot orange';
+            receiverStatusText.textContent = 'Reconectando...';
+            if (!reconnectTimer) {
+                reconnectTimer = setTimeout(() => {
+                    triggerAutoReconnect();
+                }, 1500);
+            }
+        }
+    };
+
+    receiverPc.ontrack = (event) => {
+        log(`Áudio direto recebido! Reproduzindo instantaneamente (< 100ms)...`);
+        
+        const stream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
+        
+        // Reprodução direta via elemento <audio> HTML5 sem atraso de buffer
+        remoteAudio.srcObject = stream;
+        remoteAudio.muted = false;
+        remoteAudio.volume = parseFloat(volumeSlider ? volumeSlider.value : 1.0);
+
+        // Visualizador visual em tempo real sem redirecionamento para o speaker
+        setupVisualizer(stream, 'receiver-visualizer');
+
+        const playPromise = remoteAudio.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                log('Som saindo instantaneamente no celular!');
+                receiverDot.className = 'dot green';
+                receiverStatusText.textContent = '🟢 Áudio Ao Vivo Conectado';
+                audioUnlockContainer.classList.add('hidden');
+                playbackPanel.classList.remove('hidden');
+            }).catch(e => {
+                log(`Autoplay bloqueado pelo celular. Toque no botão verde: ${e.message}`);
+                receiverDot.className = 'dot orange';
+                receiverStatusText.textContent = 'Áudio pronto! Toque no botão verde abaixo:';
+                audioUnlockContainer.classList.remove('hidden');
+                playbackPanel.classList.add('hidden');
+            });
+        }
+    };
+
+    try {
+        await receiverPc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+
+        while (receiverIceQueue.length > 0) {
+            const cand = receiverIceQueue.shift();
+            try {
+                await receiverPc.addIceCandidate(cand.candidate ? cand : new RTCIceCandidate(cand));
+            } catch (e) {}
+        }
+
+        const answer = await receiverPc.createAnswer();
+        await receiverPc.setLocalDescription(answer);
+
+        socket.emit('answer', {
+            targetId: data.senderId,
+            roomId: currentRoomId,
+            sdp: answer
+        });
+    } catch (e) {
+        log(`Erro ao processar oferta: ${e.message}`);
+    }
+});
+
+socket.on('answer', async (data) => {
+    log(`Resposta (Answer) recebida do celular (${data.senderId})`);
+    const pc = broadcasterPeers.get(data.senderId);
+    if (pc) {
+        try {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+
+            const pending = broadcasterPendingIce.get(data.senderId) || [];
+            while (pending.length > 0) {
+                const cand = pending.shift();
+                await pc.addIceCandidate(cand.candidate ? cand : new RTCIceCandidate(cand));
+            }
+        } catch (e) {
+            log(`Erro ao aplicar Answer: ${e.message}`);
+        }
+    }
+});
+
+socket.on('ice-candidate', async (data) => {
+    if (!data.candidate) return;
+
+    if (isBroadcaster) {
+        const pc = broadcasterPeers.get(data.senderId);
+        if (pc && pc.remoteDescription) {
+            try {
+                await pc.addIceCandidate(data.candidate.candidate ? data.candidate : new RTCIceCandidate(data.candidate));
+            } catch (e) {}
+        } else {
+            const queue = broadcasterPendingIce.get(data.senderId) || [];
+            queue.push(data.candidate);
+            broadcasterPendingIce.set(data.senderId, queue);
+        }
+    } else {
+        if (receiverPc && receiverPc.remoteDescription) {
+            try {
+                await receiverPc.addIceCandidate(data.candidate.candidate ? data.candidate : new RTCIceCandidate(data.candidate));
+            } catch (e) {}
+        } else {
+            receiverIceQueue.push(data.candidate);
+        }
+    }
+});
+
+// --- VISUALIZADOR DE ÁUDIO (Apenas análise visual sem delay de saída) ---
+function setupVisualizer(stream, visualizerId) {
+    const visualizerEl = document.getElementById(visualizerId);
+    if (!visualizerEl) return;
+
+    try {
+        if (!audioContext || audioContext.state === 'closed') {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
+
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 32;
+        source.connect(analyser);
+        // NOTA: Não conecta ao destination para evitar buffering/resampling de áudio!
+
+        const bars = visualizerEl.querySelectorAll('.bar');
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        function draw() {
+            if (!stream.active) return;
+            requestAnimationFrame(draw);
+            analyser.getByteFrequencyData(dataArray);
+
+            bars.forEach((bar, i) => {
+                const val = dataArray[i % dataArray.length] || 0;
+                const height = Math.max(8, (val / 255) * 55);
+                bar.style.height = `${height}px`;
+            });
+        }
+        draw();
+    } catch (e) {
+        log(`Visualizer info: ${e.message}`);
+    }
+}
